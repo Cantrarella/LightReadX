@@ -11,7 +11,7 @@ export function handleNativeDragDrop(payload: DragDropEvent, router: Pick<Router
   if (payload.type !== 'drop' || !payload.paths.length) return
   nativeDropQueue.value = [...nativeDropQueue.value, [...payload.paths]]
   const path = router.currentRoute.value.path
-  if (path !== '/library' && path !== '/papers') {
+  if (path !== '/library') {
     void router.push('/library').catch(error => console.warn('[drop navigation]', error))
   }
 }

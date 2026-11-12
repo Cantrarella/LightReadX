@@ -52,7 +52,7 @@ export interface CatalogSourceRec {
   id: string
   title: string
   url: string
-  /** opds: 标准 OPDS 目录; arxiv: arXiv API 适配器 */
+  /** opds: 标准 OPDS 目录; arxiv: 仅为兼容旧归档数据保留, 界面不再提供 */
   kind: 'opds' | 'arxiv'
   builtin: boolean
   addedAt: number
@@ -197,5 +197,4 @@ export const newId = () => crypto.randomUUID()
 /** 内置书源, 启动时与库中记录同步 (以 url 为准增删) */
 export const BUILTIN_SOURCES: Array<Pick<CatalogSourceRec, 'title' | 'url' | 'kind'>> = [
   { title: '古登堡计划 (Project Gutenberg)', url: 'https://www.gutenberg.org/ebooks.opds/', kind: 'opds' },
-  { title: 'arXiv 论文', url: 'https://export.arxiv.org/api/query', kind: 'arxiv' },
 ]

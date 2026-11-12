@@ -294,9 +294,6 @@ interface SettingsState {
   zhConvert: ZhConvertMode
   /** 摸鱼模式 (桌面): 无边框 + 半透明 + 老板键, 见 services/stealth.ts */
   stealth: StealthPrefs
-  /** AI 辅读: 设置页选择的本机引擎与可选手动可执行文件路径 */
-  paperAgentEngine: 'codex' | 'claude' | 'pi'
-  paperAgentExecutables: Record<'codex' | 'claude' | 'pi', string>
   /** WebDAV 云备份 */
   webdavUrl: string
   webdavUser: string
@@ -394,8 +391,6 @@ const defaults: SettingsState = {
     bounds: null,
     introSeen: false,
   },
-  paperAgentEngine: 'pi',
-  paperAgentExecutables: { codex: '', claude: '', pi: '' },
   webdavUrl: '',
   webdavUser: '',
   webdavPass: '',
@@ -498,17 +493,11 @@ function load(): SettingsState {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return firstRunDefaults()
     const saved = JSON.parse(raw)
-    const savedAgentExecutables = saved.paperAgentExecutables != null
-      && typeof saved.paperAgentExecutables === 'object'
-      && !Array.isArray(saved.paperAgentExecutables)
-      ? saved.paperAgentExecutables
-      : {}
     const merged = {
       ...structuredClone(defaults),
       ...saved,
       reader: { ...defaults.reader, ...saved.reader },
       pdf: { ...defaults.pdf, ...saved.pdf },
-      paperAgentExecutables: { ...defaults.paperAgentExecutables, ...savedAgentExecutables },
       readingMode: mergeReadingMode(saved.readingMode),
       stealth: {
         ...defaults.stealth,
@@ -524,11 +513,7 @@ function load(): SettingsState {
         kinds: { ...defaults.dianjing.kinds, ...(saved.dianjing?.kinds ?? {}) },
       },
     }
-    if (!['codex', 'claude', 'pi'].includes(merged.paperAgentEngine)) merged.paperAgentEngine = 'pi'
     if (!['system', 'light', 'dark'].includes(merged.appearance)) merged.appearance = 'system'
-    for (const engine of ['codex', 'claude', 'pi'] as const) {
-      if (typeof merged.paperAgentExecutables[engine] !== 'string') merged.paperAgentExecutables[engine] = ''
-    }
     // v2: PDF 阅读默认翻页+适高 (纠正早期版本持久化下来的滚动模式)
     if ((saved.version ?? 1) < 2) {
       merged.pdf.mode = 'paged'

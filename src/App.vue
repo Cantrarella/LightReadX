@@ -5,7 +5,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
-import BabeldocTaskStatus from './components/BabeldocTaskStatus.vue'
 import LibraryUploadStatus from './components/LibraryUploadStatus.vue'
 import WindowTitleBar from './components/WindowTitleBar.vue'
 import { initWindowChrome, windowChrome } from './services/windowChrome'
@@ -173,7 +172,7 @@ watch(immersive, (now, before) => {
 
 const allNavs = [
   { path: '/library', labelKey: 'nav.library', icon: 'M4 3v18M9 3v18M14 4l6 16M3 21h18' },
-  { path: '/papers', labelKey: 'nav.papers', icon: 'M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7' },
+  { path: '/comics', labelKey: 'nav.comics', icon: 'M3 3h8v10H3zM13 3h8v6h-8zM3 15h8v6H3zM13 11h8v10h-8z' },
   { path: '/catalogs', labelKey: 'nav.catalogs', icon: 'M4 5h16v15H4zM8 2v6M16 2v6M4 10h16M8 14h8' },
   { path: '/stats', labelKey: 'nav.stats', icon: 'M4 21V11M10 21V4M16 21V8M22 21H2' },
   // 互传: 手机底部标签栏已有 5 个, 不再挤第 6 个 (手机入口在藏书页「导入」菜单与设置页), 见 docs/device-transfer.md
@@ -276,7 +275,6 @@ const settingsNav = { path: '/settings', labelKey: 'nav.settings', icon: 'M9 3h6
       <main ref="mainEl" class="main">
         <router-view :key="route.fullPath" />
       </main>
-      <BabeldocTaskStatus />
       <LibraryUploadStatus />
       <ToastHost />
       <ConfirmHost />

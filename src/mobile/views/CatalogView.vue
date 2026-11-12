@@ -13,7 +13,6 @@ import {
 } from '../../services/privateLibrary.ts'
 import { readerPath } from '../../services/readerRoute.ts'
 import { canPickFolder } from '../../services/folderSource.ts'
-import { arxivRootPage, arxivSearchUrl, isArxivUrl, loadArxivPage } from '../../services/arxiv.ts'
 import {
   calibreAvailable, importCalibreBook, listCalibreBooks, pickCalibreLibrary,
   calibreCoverUrl, pickBestFormat, type CalibreBook,
@@ -33,7 +32,6 @@ import { searchInternetArchive, loadArchivePublication, type ArchiveBook } from 
 import { WEB_BOOK_SOURCES, webBookSourceUrl } from '../../services/webBookSources.ts'
 import { catalogErrorKey } from '../../services/catalogErrors.ts'
 import { normalizeBookQuery, titleRelevance } from '../../services/bookQuery.ts'
-import { arxivSearchUrl as arxivSearchUrlOf, loadArxivPage as loadArxivPageOf } from '../../services/arxiv.ts'
 import { importFromUrl } from '../../services/urlImport.ts'
 import { useSettings } from '../../stores/settings.ts'
 import { useLibrary } from '../../stores/library.ts'
@@ -109,7 +107,7 @@ async function importGhBook(hit: GithubBookHit) {
 
 // ---- 统一搜书: 默认优先免登录的公开图书 ----
 const uniQuery = ref('')
-const uniScopes = reactive({ github: hasGhRepos.value, gutenberg: true, archive: true, philosophy: true, wendian: true, openlibrary: false, arxiv: false })
+const uniScopes = reactive({ github: hasGhRepos.value, gutenberg: true, archive: true, philosophy: true, wendian: true, openlibrary: false })
 const hasSearchScope = computed(() =>
   Object.values(uniScopes).some(Boolean) || myLibraries.value.some(s => myScopeOn(s.id)))
 const uniPhilosophy = ref<PhilosophyWork[]>([])
@@ -149,17 +147,16 @@ function toggleGroup(key: string) {
 const uniErrors = ref<string[]>([])
 const uniGithub = ref<GithubBookHit[]>([])
 const uniGutenberg = ref<OpdsPublication[]>([])
-const uniArxiv = ref<OpdsPublication[]>([])
 let uniSession = 0
 /** 本次搜索实际发出的 (归一后的) 关键词, 用于结果分组排序 */
 const uniActiveQuery = ref('')
 
 // ---- 各公开书源的状态: 搜索中 / 有结果 / 未找到 / 出错, 分组按结果相关度排序 ----
-type UniSource = 'philosophy' | 'wendian' | 'archive' | 'github' | 'gutenberg' | 'openlibrary' | 'arxiv'
+type UniSource = 'philosophy' | 'wendian' | 'archive' | 'github' | 'gutenberg' | 'openlibrary'
 /** 同等相关度时的默认顺序 */
-const UNI_SOURCES: UniSource[] = ['philosophy', 'wendian', 'archive', 'github', 'gutenberg', 'openlibrary', 'arxiv']
+const UNI_SOURCES: UniSource[] = ['philosophy', 'wendian', 'archive', 'github', 'gutenberg', 'openlibrary']
 const uniStatus = reactive<Record<UniSource, 'idle' | 'loading' | 'done' | 'error'>>({
-  philosophy: 'idle', wendian: 'idle', archive: 'idle', github: 'idle', gutenberg: 'idle', openlibrary: 'idle', arxiv: 'idle',
+  philosophy: 'idle', wendian: 'idle', archive: 'idle', github: 'idle', gutenberg: 'idle', openlibrary: 'idle',
 })
 /** 搜索范围里的公开来源 (顺序即显示顺序) */
 const publicScopeChips = computed(() => ([
@@ -167,7 +164,6 @@ const publicScopeChips = computed(() => ([
   { key: 'wendian', name: t('catalog.wendian'), title: t('catalog.wendianHint') },
   { key: 'gutenberg', name: t('catalog.gutenberg') },
   { key: 'archive', name: 'Internet Archive' },
-  { key: 'arxiv', name: 'arXiv' },
   { key: 'openlibrary', name: 'Open Library' },
   // 没添加 GitHub 仓库时不出现在搜索范围里
   ...(hasGhRepos.value ? [{ key: 'github', name: 'GitHub' }] : []),
@@ -176,7 +172,7 @@ const publicScopeChips = computed(() => ([
 watch(hasGhRepos, on => { uniScopes.github = on })
 const uniSourceName = (key: UniSource) => ({
   philosophy: t('catalog.philosophy'), wendian: t('catalog.wendian'), archive: 'Internet Archive', github: 'GitHub',
-  gutenberg: t('catalog.gutenberg'), openlibrary: 'Open Library', arxiv: 'arXiv',
+  gutenberg: t('catalog.gutenberg'), openlibrary: 'Open Library',
 })[key]
 
 function uniTitles(key: UniSource): string[] {
@@ -187,7 +183,6 @@ function uniTitles(key: UniSource): string[] {
     case 'github': return uniGithub.value.map(h => h.name)
     case 'gutenberg': return uniGutenberg.value.map(p => p.title)
     case 'openlibrary': return uniOpenLibrary.value.map(b => b.title)
-    case 'arxiv': return uniArxiv.value.map(p => p.title)
   }
 }
 
@@ -244,7 +239,6 @@ function clearSearchResults() {
   uniErrors.value = []
   uniGithub.value = []
   uniGutenberg.value = []
-  uniArxiv.value = []
   expandedGroups.clear()
   myResults.value = []
 }
@@ -306,9 +300,6 @@ async function uniSearch() {
   if (uniScopes.wendian) run('wendian', () => searchWendian(query), works => { uniWendian.value = works })
   if (uniScopes.archive) run('archive', () => searchInternetArchive(query), books => { uniArchive.value = books })
   if (uniScopes.openlibrary) run('openlibrary', () => searchOpenLibrary(query), books => { uniOpenLibrary.value = books })
-  if (uniScopes.arxiv) {
-    run('arxiv', () => loadArxivPageOf(arxivSearchUrlOf(query)), p => { uniArxiv.value = (p.publications ?? []).slice(0, 20) })
-  }
   await Promise.allSettled(jobs)
   if (session === uniSession) {
     uniSearched.value = true
@@ -380,12 +371,12 @@ async function importWendianWork(work: WendianWork) {
   }
 }
 
-/** 统一搜书里下载 OPDS/arXiv 出版物 */
+/** 统一搜书里下载 OPDS 出版物 */
 async function uniDownloadPub(pub: OpdsPublication, acq: OpdsPublication['acquisitions'][number], sourceTitle: string) {
   if (downloading.value.has(acq.href)) return
   downloading.value.add(acq.href)
   try {
-    await downloadToLibrary(pub, acq, sourceTitle, undefined, sourceTitle === 'arXiv' ? 'paper' : undefined)
+    await downloadToLibrary(pub, acq, sourceTitle, undefined)
     await library.refresh()
     toast(t('library.importSuccess', { count: 1 }), 'success')
   } catch (e: any) {
@@ -407,10 +398,10 @@ const searchScopeSummary = computed(() => [
   ...myLibraries.value.filter(s => myScopeOn(s.id)).map(s => s.title),
 ].join(settings.language === 'en' ? ', ' : '、'))
 // GitHub 只在添加了自己的仓库后出现 (不内置任何第三方仓库)
-const mainPublicSources = computed<UniSource[]>(() => ['gutenberg', 'archive', 'arxiv', ...(hasGhRepos.value ? ['github' as const] : [])])
+const mainPublicSources = computed<UniSource[]>(() => ['gutenberg', 'archive', ...(hasGhRepos.value ? ['github' as const] : [])])
 const extraPublicSources = computed(() => publicScopeChips.value.filter(chip => chip.key !== 'github' && !mainPublicSources.value.includes(chip.key)))
 function openPublicSource(key: UniSource) {
-  const source = sources.value.find(s => s.builtin && (key === 'arxiv' ? s.kind === 'arxiv' : key === 'gutenberg' && s.kind !== 'arxiv'))
+  const source = sources.value.find(s => s.builtin && key === 'gutenberg')
   if (source) void openSource(source)
   else publicBrowse.value = key
 }
@@ -643,9 +634,7 @@ function closeAdd() {
 
 /** 按书源类型选择加载器 */
 function loadPage(url: string) {
-  return activeSource.value?.kind === 'arxiv' || isArxivUrl(url)
-    ? loadArxivPage(url, sourceAuth())
-    : loadOpdsPage(url, sourceAuth())
+  return loadOpdsPage(url, sourceAuth())
 }
 
 async function refreshSources() {
@@ -788,23 +777,12 @@ function openSource(s: CatalogSourceRec) {
   activeSource.value = s
   breadcrumbs.value = []
   page.value = null
-  if (s.kind === 'arxiv') {
-    // arXiv 根页面是本地分类导航, 无需网络请求
-    page.value = arxivRootPage()
-    breadcrumbs.value.push({ title: s.title, url: 'arxiv-root' })
-    return
-  }
   openUrl(s.url, s.title)
 }
 
 function gotoCrumb(i: number) {
   const crumb = breadcrumbs.value[i]
   breadcrumbs.value = breadcrumbs.value.slice(0, i)
-  if (crumb.url === 'arxiv-root') {
-    page.value = arxivRootPage()
-    breadcrumbs.value.push(crumb)
-    return
-  }
   openUrl(crumb.url, crumb.title)
 }
 
@@ -819,10 +797,6 @@ function backToSources() {
 async function runSearch() {
   const query = searchQuery.value.trim()
   if (!query || !page.value?.searchUrl) return
-  if (page.value.searchUrl === 'arxiv-search') {
-    openUrl(arxivSearchUrl(query), t('catalog.searchCrumb', { query }))
-    return
-  }
   const template = page.value.searchUrl
   if (template.includes('{searchTerms}')) {
     // 直接内联的 OpenSearch 模板
@@ -864,7 +838,7 @@ async function download(pub: OpdsPublication, acq: OpdsPublication['acquisitions
   try {
     await downloadToLibrary(
       pub, acq, activeSource.value?.title ?? 'OPDS', sourceAuth(),
-      activeSource.value?.kind === 'arxiv' ? 'paper' : undefined,
+      undefined,
     )
     await library.refresh()
     toast(t('catalog.bookImported', { title: pub.title }), 'success')
@@ -898,7 +872,7 @@ async function saveSource() {
   const fields = {
     title: newTitle.value.trim() || url,
     url,
-    kind: isArxivUrl(url) ? 'arxiv' as const : 'opds' as const,
+    kind: 'opds' as const,
     username: newUsername.value.trim() || split.username || undefined,
     password: newPassword.value || split.password || undefined,
   }
@@ -1145,24 +1119,6 @@ async function removeSource(s: CatalogSourceRec) {
                 </div>
               </template>
 
-              <template v-else-if="key === 'arxiv'">
-                <div v-for="(pub, i) in shownOf(key, uniArxiv)" :key="i" class="gh-item uni-pub">
-                  <div class="uni-pub-main">
-                    <span class="gh-name">{{ pub.title }}</span>
-                    <span class="gh-meta">{{ pub.author || '' }}</span>
-                  </div>
-                  <span class="uni-acts">
-                    <button
-                      v-for="acq in pub.acquisitions.slice(0, 1)"
-                      :key="acq.href"
-                      class="btn btn-sm btn-accent"
-                      :disabled="downloading.has(acq.href)"
-                      @click.stop="uniDownloadPub(pub, acq, 'arXiv')"
-                    >{{ downloading.has(acq.href) ? t('catalog.downloading') : t('catalog.download', { label: acq.label }) }}</button>
-                  </span>
-                </div>
-              </template>
-
               <div v-if="uniTitles(key).length > UNI_PREVIEW" class="uni-more">
                 <button class="btn btn-sm btn-ghost" :aria-expanded="expandedGroups.has(key)" @click="toggleGroup(key)">
                   {{ expandedGroups.has(key) ? t('catalog.showFewer') : t('catalog.showAllResults', { n: key === 'github' ? Math.min(uniTitles(key).length, 60) : uniTitles(key).length }) }}
@@ -1208,8 +1164,7 @@ async function removeSource(s: CatalogSourceRec) {
           >
             <div class="source-top">
               <div class="source-icon" aria-hidden="true">
-                <svg v-if="s.kind === 'arxiv'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
-                <svg v-else-if="s.builtin" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>
+                <svg v-if="s.builtin" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>
                 <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>
               </div>
               <div class="source-body">

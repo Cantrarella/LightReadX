@@ -36,12 +36,6 @@ import { bossKeyLabel, shortcutFromEvent, stealthSupported, STEALTH_BG_MIN, STEA
 import { providerById, chatStream } from '../services/ai'
 import AiProviderPicker from '../components/settings/AiProviderPicker.vue'
 import LocalModelPack from '../components/LocalModelPack.vue'
-import {
-  paperAgentRuntimeAvailable,
-  paperAgentEngineStatus,
-  type PaperAgentEngine,
-  type PaperAgentEngineStatus,
-} from '../services/paperAgent.ts'
 
 const settings = useSettings()
 
@@ -414,7 +408,6 @@ const navSections = computed(() => [
   { id: 'features', label: t('settings.features') },
   { id: 'reading', label: t('settings.navReading') },
   { id: 'ai', label: t('settings.aiTitle') },
-  ...(paperAgentRuntimeAvailable() ? [{ id: 'agents', label: t('settings.paperAgentsTitle') }] : []),
   { id: 'data', label: t('settings.data') },
   { id: 'network', label: t('settings.network') },
   { id: 'about', label: t('settings.about') },
@@ -466,7 +459,6 @@ function jumpTo(id: string) {
   const el = document.getElementById(`settings-${id}`)
   if (!el) return
   // 默认收起的分区: 跳过去时先展开
-  if (id === 'agents') setAgentsOpen(true)
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   spyLockUntil = Date.now() + (reduce ? 50 : 700)
   setActiveSection(id)
@@ -487,7 +479,6 @@ const phonePage = computed(() => {
 const phonePageTitle = computed(() => navSections.value.find(s => s.id === phonePage.value)?.label ?? '')
 const showSection = (id: string) => !phone.value || phonePage.value === id
 function openPhonePage(id: string) {
-  if (id === 'agents') setAgentsOpen(true)
   void router.push({ query: { ...route.query, page: id } })
 }
 function closePhonePage() {
@@ -525,7 +516,6 @@ onMounted(() => {
   const section = typeof route.query.section === 'string' ? route.query.section : ''
   if (!section || !navSections.value.some(s => s.id === section)) return
   if (phone.value) {
-    if (section === 'agents') setAgentsOpen(true)
     void router.replace({ query: { page: section } })
   } else nextTick(() => jumpTo(section))
 })
@@ -593,7 +583,6 @@ onMounted(async () => {
   doCheckUpdate(false)
   const storage = await getStorage()
   storageKind.value = storage.kind
-  await refreshPaperAgentStatuses()
 })
 
 // ---- AI 助手 ----
@@ -619,91 +608,6 @@ const aiShowBaseUrl = computed(() => {
 const aiPreset = computed(() => providerById(settings.aiProvider))
 const aiNeedsKey = computed(() => aiPreset.value.needsKey || aiPreset.value.id === 'custom')
 const aiDocsUrl = computed(() => providerById(settings.aiProvider).docsUrl ?? '')
-
-const paperAgentEngines: Array<{ id: PaperAgentEngine; label: string }> = [
-  { id: 'pi', label: 'Pi Agent' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude Code' },
-]
-const paperAgentStatuses = ref<Record<PaperAgentEngine, PaperAgentEngineStatus | null>>({
-  codex: null, claude: null, pi: null,
-})
-const checkingPaperAgents = ref(false)
-
-/** 论文 Agent 分区默认收起 (多数人用默认引擎即可); 展开状态记在本机, 读写失败就当收起 */
-const AGENTS_OPEN_KEY = 'lightread-settings-agents-open'
-function readAgentsOpen(): boolean {
-  try {
-    return localStorage.getItem(AGENTS_OPEN_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-const agentsOpen = ref(readAgentsOpen())
-function setAgentsOpen(open: boolean) {
-  agentsOpen.value = open
-  try {
-    if (open) localStorage.setItem(AGENTS_OPEN_KEY, '1')
-    else localStorage.removeItem(AGENTS_OPEN_KEY)
-  } catch { /* 隐私模式等: 只在本次会话里生效 */ }
-}
-
-type AgentState = 'ready' | 'unavailable' | 'checking' | 'unknown'
-function paperAgentState(engine: PaperAgentEngine): AgentState {
-  const status = paperAgentStatuses.value[engine]
-  if (status) return status.compatible && status.authenticated ? 'ready' : 'unavailable'
-  return checkingPaperAgents.value ? 'checking' : 'unknown'
-}
-const AGENT_STATE_KEYS: Record<AgentState, string> = {
-  ready: 'settings.paperAgentsReady',
-  unavailable: 'settings.paperAgentsUnavailable',
-  checking: 'settings.testing',
-  unknown: 'settings.paperAgentsUnchecked',
-}
-/** 原生层的不可用原因是英文诊断; 最常见的「没装」换成本地化说明和下一步 */
-function paperAgentReason(id: PaperAgentEngine): string {
-  const status = paperAgentStatuses.value[id]
-  if (!status) return ''
-  if (!status.found && /executable not found/i.test(status.reason)) return t('settings.paperAgentsNotFound')
-  return status.reason
-}
-/** 收起时标题行右侧的摘要: 当前引擎 + 状态 */
-const agentsSummary = computed(() => {
-  const id = settings.paperAgentEngine
-  const state = paperAgentState(id)
-  return {
-    label: paperAgentEngines.find(e => e.id === id)?.label ?? id,
-    state,
-    text: t(AGENT_STATE_KEYS[state]),
-    reason: state === 'unavailable' ? paperAgentReason(id) : '',
-  }
-})
-
-async function refreshPaperAgentStatuses() {
-  if (!paperAgentRuntimeAvailable() || checkingPaperAgents.value) return
-  checkingPaperAgents.value = true
-  try {
-    const entries = await Promise.all(paperAgentEngines.map(async ({ id }) => [
-      id,
-      await paperAgentEngineStatus(id, settings.paperAgentExecutables[id] || undefined),
-    ] as const))
-    paperAgentStatuses.value = Object.fromEntries(entries) as Record<PaperAgentEngine, PaperAgentEngineStatus>
-  } finally {
-    checkingPaperAgents.value = false
-  }
-}
-
-async function choosePaperAgentExecutable(engine: PaperAgentEngine) {
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const picked = await open({
-    directory: false,
-    multiple: false,
-    title: t('settings.paperAgentsBrowseTitle'),
-  })
-  if (typeof picked !== 'string') return
-  settings.paperAgentExecutables[engine] = picked
-  await refreshPaperAgentStatuses()
-}
 
 async function testAi() {
   if (aiTesting.value) return
@@ -1021,11 +925,6 @@ const APPEARANCE_OPTIONS = [
           <span class="pl-ico tone-purple" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>
           <span class="pl-text"><span class="pl-title">{{ t('settings.aiTitle') }}</span></span>
           <span class="pl-value">{{ aiProviderLabel }}</span><svg class="pl-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-        </button>
-        <button v-if="paperAgentRuntimeAvailable()" type="button" class="pl-row" @click="openPhonePage('agents')">
-          <span class="pl-ico tone-gray" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H4zM8 20h8M12 16v4M8 9l2 2-2 2M13 13h3"/></svg></span>
-          <span class="pl-text"><span class="pl-title">{{ t('settings.paperAgentsTitle') }}</span></span>
-          <span class="pl-value">{{ agentsSummary.label }}</span><svg class="pl-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
         </button>
       </div>
 
@@ -1525,108 +1424,6 @@ const APPEARANCE_OPTIONS = [
       <LocalModelPack kind="tts" />
     </section>
 
-    <section
-      v-if="paperAgentRuntimeAvailable()"
-      v-show="showSection('agents')"
-      id="settings-agents"
-      class="card section agents-section"
-      :class="{ open: agentsOpen }"
-      aria-labelledby="settings-agents-heading"
-    >
-      <!-- 默认收起: 标题行即开关, 收起时右侧显示当前引擎与状态; 被程序聚焦 (分区导航 / 深链) 时自动展开 -->
-      <h2 id="settings-agents-heading" class="agents-heading" tabindex="-1" @focus="setAgentsOpen(true)">
-        <button
-          type="button"
-          class="agents-toggle"
-          :aria-expanded="agentsOpen"
-          aria-controls="settings-agents-body"
-          @click="setAgentsOpen(!agentsOpen)"
-        >
-          <span class="agents-toggle-title">{{ t('settings.paperAgentsTitle') }}</span>
-          <span
-            class="agents-summary"
-            :class="`is-${agentsSummary.state}`"
-            :title="agentsSummary.reason || undefined"
-          >
-            <span class="agent-dot" aria-hidden="true" />
-            <span class="agents-summary-engine">{{ agentsSummary.label }}</span>
-            <span class="agents-summary-sep" aria-hidden="true">·</span>
-            <span>{{ agentsSummary.text }}</span>
-          </span>
-          <svg class="agents-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
-      </h2>
-      <div id="settings-agents-body" class="agents-body">
-        <div class="agents-body-inner">
-          <div class="row row-inline agents-intro">
-            <div class="row-text">
-              <div class="row-title">{{ t('settings.paperAgentsEngine') }}</div>
-              <div class="row-desc">{{ t('settings.paperAgentsDesc') }}</div>
-            </div>
-            <button type="button" class="btn btn-sm" :disabled="checkingPaperAgents" @click="refreshPaperAgentStatuses">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" :class="{ spinning: checkingPaperAgents }"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
-              {{ checkingPaperAgents ? t('settings.testing') : t('settings.paperAgentsCheck') }}
-            </button>
-          </div>
-
-          <div class="agent-engines" role="radiogroup" :aria-label="t('settings.paperAgentsDefault')">
-            <div
-              v-for="engine in paperAgentEngines"
-              :key="engine.id"
-              class="agent-engine"
-              :class="{ selected: settings.paperAgentEngine === engine.id }"
-            >
-              <label class="agent-engine-head">
-                <input
-                  v-model="settings.paperAgentEngine"
-                  class="agent-radio"
-                  type="radio"
-                  name="paper-agent-engine"
-                  :value="engine.id"
-                />
-                <span class="agent-engine-name">{{ engine.label }}</span>
-                <span v-if="settings.paperAgentEngine === engine.id" class="agent-current">{{ t('settings.paperAgentsCurrent') }}</span>
-                <span class="agent-status" :class="`is-${paperAgentState(engine.id)}`">
-                  <span class="agent-dot" aria-hidden="true" />
-                  {{ t(AGENT_STATE_KEYS[paperAgentState(engine.id)]) }}
-                </span>
-              </label>
-              <div class="agent-path-row">
-                <input
-                  v-model="settings.paperAgentExecutables[engine.id]"
-                  class="input"
-                  spellcheck="false"
-                  autocapitalize="off"
-                  :placeholder="t('settings.paperAgentsPathPlaceholder')"
-                  :aria-label="`${engine.label} · ${t('settings.paperAgentsPathPlaceholder')}`"
-                  @change="refreshPaperAgentStatuses"
-                />
-                <button type="button" class="btn btn-sm" @click="choosePaperAgentExecutable(engine.id)">
-                  {{ t('settings.paperAgentsBrowse') }}
-                </button>
-              </div>
-              <div
-                v-if="paperAgentStatuses[engine.id]?.path || paperAgentState(engine.id) === 'unavailable'"
-                class="agent-engine-meta"
-              >
-                <template v-if="paperAgentStatuses[engine.id]?.path">
-                  <span v-if="paperAgentStatuses[engine.id]?.version" class="agent-version">{{ paperAgentStatuses[engine.id]?.version }}</span>
-                  <code>{{ paperAgentStatuses[engine.id]?.path }}</code>
-                </template>
-                <span v-if="paperAgentState(engine.id) === 'unavailable' && paperAgentReason(engine.id)" class="agent-reason">
-                  {{ paperAgentReason(engine.id) }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <p class="agent-settings-note">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
-            <span>{{ t('settings.paperAgentsNote') }}</span>
-          </p>
-        </div>
-      </div>
-    </section>
 
     <!-- 数据 -->
     <section v-show="showSection('data')" id="settings-data" class="card section" aria-labelledby="settings-data-heading">
