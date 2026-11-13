@@ -7,13 +7,17 @@
  * 重启后未完成的任务标成「已中断」, 可以一键重下。
  */
 import { computed, reactive } from 'vue'
-import { cancelDownload, downloadChapterAsCbz, safeFileName, type DownloadPhase } from './download'
+import {
+  cancelDownload, downloadChapterAsCbz, pauseDownload, clearPauseFlag,
+  safeFileName, type DownloadPhase,
+} from './download'
+import { cacheDropTask } from './downloadCache'
 import { chapterKey, chapterRequestId } from './normalize'
 import { getStorage } from '../../storage'
 import type { BookMeta } from '../../storage/types'
 import type { ComicChapter } from './types'
 
-export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted'
+export type TaskStatus = 'queued' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface DownloadTask {
   id: string
@@ -29,6 +33,8 @@ export interface DownloadTask {
   total: number
   error?: string
   bookId?: string
+  /** 整章失败自动重试的次数 (超过上限才标 failed) */
+  attempts?: number
   createdAt: number
   updatedAt: number
 }
@@ -36,6 +42,10 @@ export interface DownloadTask {
 const STORAGE_KEY = 'lightread.comicDownloads.v1'
 /** 同时跑几个章节: 每个任务有自己的插件宿主, 2 个足够, 再多会互相抢带宽 */
 const MAX_PARALLEL = 2
+/** 整章失败自动重试的总次数 (超过才标 failed, 防止无限重下) */
+const MAX_AUTO_RETRIES = 2
+/** 单页下载失败的重试次数 (指数退避) */
+const PAGE_RETRIES = 3
 
 export const downloadState = reactive({
   tasks: [] as DownloadTask[],
@@ -51,8 +61,8 @@ function load(): DownloadTask[] {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
     if (!Array.isArray(raw)) return []
     return raw.filter((t: DownloadTask) => t && t.id).map((t: DownloadTask) => (
-      // 上次退出时还在跑的, 现在肯定已经停了
-      t.status === 'running' || t.status === 'queued'
+      // 上次退出时还在跑/暂停/排队的, 现在肯定已经停了
+      t.status === 'running' || t.status === 'queued' || t.status === 'paused'
         ? { ...t, status: 'interrupted' as TaskStatus, error: t.error }
         : t
     ))
@@ -110,7 +120,7 @@ export async function findDownloadedBook(
   }
 }
 
-export const activeTasks = computed(() => downloadState.tasks.filter(t => t.status === 'queued' || t.status === 'running'))
+export const activeTasks = computed(() => downloadState.tasks.filter(t => t.status === 'queued' || t.status === 'running' || t.status === 'paused'))
 export const activeCount = computed(() => activeTasks.value.length)
 export const failedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'failed' || t.status === 'interrupted'))
 export const finishedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'done'))
@@ -210,6 +220,8 @@ async function run(task: DownloadTask) {
     } as ComicChapter
     const result = await downloadChapterAsCbz(task.uuid, task.comicId, chapter, {
       taskGroupKey: task.id,
+      cacheKey: task.id,
+      maxPageRetries: PAGE_RETRIES,
       onProgress: progress => patch(task.id, {
         phase: progress.phase,
         loaded: progress.loaded,
@@ -219,16 +231,33 @@ async function run(task: DownloadTask) {
     })
     if (result.ok) {
       patch(task.id, {
-        status: 'done', phase: 'done', error: undefined,
+        status: 'done', phase: 'done', error: undefined, attempts: 0,
         bookId: result.bookId, loaded: task.total || task.loaded,
       })
+      // 完成, 清掉断点缓存
+      void cacheDropTask(task.id)
+    } else if (result.error === 'paused') {
+      // 暂停: 保留已下进度, 标 paused, 不重排
+      patch(task.id, { status: 'paused', error: undefined })
     } else if (result.error === 'cancelled') {
       patch(task.id, { status: 'cancelled', error: undefined })
+      void cacheDropTask(task.id)
     } else {
-      patch(task.id, { status: 'failed', error: result.error ?? 'unknown' })
+      // 失败: 先自动重试 (指数退避重排), 超过次数才标 failed
+      const attempts = (task.attempts ?? 0) + 1
+      if (attempts <= MAX_AUTO_RETRIES) {
+        patch(task.id, { status: 'queued', attempts, error: result.error ?? 'unknown' })
+      } else {
+        patch(task.id, { status: 'failed', attempts, error: result.error ?? 'unknown' })
+      }
     }
   } catch (e: any) {
-    patch(task.id, { status: 'failed', error: e?.message ?? String(e) })
+    const attempts = (task.attempts ?? 0) + 1
+    if (attempts <= MAX_AUTO_RETRIES) {
+      patch(task.id, { status: 'queued', attempts, error: e?.message ?? String(e) })
+    } else {
+      patch(task.id, { status: 'failed', attempts, error: e?.message ?? String(e) })
+    }
   } finally {
     running.delete(task.id)
     schedule()
@@ -239,21 +268,65 @@ export function cancel(id: string) {
   cancelDownload(id)
   const task = downloadState.tasks.find(t => t.id === id)
   if (task && task.status === 'queued') patch(id, { status: 'cancelled' })
+  if (task && task.status === 'paused') {
+    patch(id, { status: 'cancelled' })
+    void cacheDropTask(id)
+  }
+}
+
+/** 暂停一个正在跑的任务 (已下字节保留, 恢复接着下) */
+export function pause(id: string) {
+  const task = downloadState.tasks.find(t => t.id === id)
+  if (!task) return
+  if (task.status === 'queued') {
+    patch(id, { status: 'paused' })
+  } else if (task.status === 'running') {
+    pauseDownload(id)
+  }
+}
+
+export function resume(id: string) {
+  const task = downloadState.tasks.find(t => t.id === id)
+  if (!task || task.status !== 'paused') return
+  clearPauseFlag(id)
+  patch(id, { status: 'queued', phase: 'chapter', error: undefined })
+  schedule()
+}
+
+export function pauseAll() {
+  for (const task of downloadState.tasks) {
+    if (task.status === 'queued') patch(task.id, { status: 'paused' })
+    else if (task.status === 'running') pauseDownload(task.id)
+  }
+}
+
+export function resumeAll() {
+  for (const task of downloadState.tasks) {
+    if (task.status === 'paused') {
+      clearPauseFlag(task.id)
+      patch(task.id, { status: 'queued', phase: 'chapter', error: undefined })
+    }
+  }
+  schedule()
 }
 
 export function retry(id: string) {
   const task = downloadState.tasks.find(t => t.id === id)
   if (!task) return
-  patch(id, { status: 'queued', phase: 'chapter', loaded: 0, total: 0, error: undefined })
+  clearPauseFlag(id)
+  patch(id, { status: 'queued', phase: 'chapter', loaded: 0, total: 0, error: undefined, attempts: 0 })
   schedule()
 }
 
 export function remove(id: string) {
   const index = downloadState.tasks.findIndex(t => t.id === id)
   if (index < 0) return
-  if (downloadState.tasks[index].status === 'running') cancelDownload(id)
+  const status = downloadState.tasks[index].status
+  if (status === 'running') cancelDownload(id)
+  if (status === 'running' || status === 'paused') clearPauseFlag(id)
   downloadState.tasks.splice(index, 1)
   persist()
+  void cacheDropTask(id)
 }
 
 /**
@@ -263,7 +336,7 @@ export function remove(id: string) {
  */
 export function clearFinished(only: 'failed' | 'done' | 'all' = 'all') {
   const keep = downloadState.tasks.filter(t => {
-    if (t.status === 'running' || t.status === 'queued') return true
+    if (t.status === 'running' || t.status === 'queued' || t.status === 'paused') return true
     if (only === 'failed') return t.status !== 'failed' && t.status !== 'interrupted'
     if (only === 'done') return t.status !== 'done'
     return false

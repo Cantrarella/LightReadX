@@ -8,6 +8,7 @@ import { zipSync } from 'fflate'
 import { importFile } from '../importer'
 import { openPlugin, downloadConcurrency } from './index'
 import { chapterKey, chapterRequestId, normalizeChapter, pageFileName } from './normalize'
+import { cacheGetPage, cachePutPage } from './downloadCache'
 import type { ComicChapter, ComicChapterResult } from './types'
 
 export type DownloadPhase = 'chapter' | 'images' | 'packing' | 'importing' | 'done' | 'cancelled' | 'error'
@@ -22,6 +23,10 @@ export interface DownloadProgress {
 export interface DownloadOptions {
   taskGroupKey?: string
   onProgress?: (progress: DownloadProgress) => void
+  /** 断点缓存的键前缀 (通常用任务 id); 不传则不做断点续传 */
+  cacheKey?: string
+  /** 单页下载失败的最大重试次数 (默认 3, 指数退避) */
+  maxPageRetries?: number
 }
 
 export interface DownloadResult {
@@ -33,6 +38,9 @@ export interface DownloadResult {
 
 const activeGroups = new Map<string, Set<string>>()
 
+/** 暂停标志: key -> 是否已请求暂停。取消/暂停共用同一套信号, 插件每张图之前查询 */
+const pausedGroups = new Map<string, boolean>()
+
 /** 请求取消正在进行的下载 (插件会在每张图之前查询 runtime.is_task_group_cancelled) */
 export function cancelDownload(key: string): void {
   activeGroups.get(key)?.add(key)
@@ -40,6 +48,19 @@ export function cancelDownload(key: string): void {
 
 export function isDownloadCancelled(key: string): boolean {
   return activeGroups.get(key)?.has(key) ?? false
+}
+
+/** 请求暂停 (不丢已下字节, 只停住推进; 恢复时接着下) */
+export function pauseDownload(key: string): void {
+  pausedGroups.set(key, true)
+}
+
+export function isDownloadPaused(key: string): boolean {
+  return pausedGroups.get(key) ?? false
+}
+
+export function clearPauseFlag(key: string): void {
+  pausedGroups.delete(key)
 }
 
 /** 导出给下载中心: 查重时要算出同一个文件名做兜底匹配 */
@@ -106,6 +127,12 @@ function packAsync(entries: Array<{ name: string; bytes: Uint8Array }>): Promise
   }
 }
 
+/** 指数退避等待: 重试间隔 0.5s / 1s / 2s ... */
+function backoff(attempt: number): Promise<void> {
+  const ms = Math.min(8000, 500 * 2 ** attempt)
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 /** 下载单章并入库; 返回的 bookId 可直接跳阅读器 */
 export async function downloadChapterAsCbz(
   uuid: string,
@@ -116,6 +143,9 @@ export async function downloadChapterAsCbz(
   const key = options.taskGroupKey ?? `${uuid}:${comicId}:${chapterRequestId(target)}`
   const group = new Set<string>()
   activeGroups.set(key, group)
+  clearPauseFlag(key)
+  const cacheKey = options.cacheKey
+  const maxRetries = options.maxPageRetries ?? 3
   const report = (phase: DownloadPhase, loaded = 0, total = 0, message?: string) =>
     options.onProgress?.({ phase, loaded, total, message })
 
@@ -139,28 +169,64 @@ export async function downloadChapterAsCbz(
     let loaded = 0
     let failure: string | undefined
 
+    // 断点续传: 先把上次已落盘的页从 DB 读回来, 这些页直接跳过
+    if (cacheKey) {
+      report('images', 0, pages.length)
+      for (let i = 0; i < pages.length; i++) {
+        if (group.has(key) || isDownloadPaused(key)) break
+        const cached = await cacheGetPage(cacheKey, i)
+        if (cached?.length) {
+          images[i] = cached
+          loaded++
+          if (i + 1 > cursor) cursor = i + 1
+          report('images', loaded, pages.length)
+        } else {
+          break
+        }
+      }
+    }
+
     const worker = async () => {
-      while (!group.has(key) && !failure) {
+      while (!group.has(key) && !isDownloadPaused(key) && !failure) {
         const index = cursor++
         if (index >= pages.length) return
-        try {
-          const bytes = await host!.callBytes(
-            'fetchImageBytes',
-            { url: pages[index].url, taskGroupKey: key },
-            { timeoutMs: 60_000 },
-          )
-          if (!bytes?.length) throw new Error('图片内容为空')
+        let bytes: Uint8Array | undefined
+        let lastError: unknown
+        // 单页自动重试 (指数退避), 超过次数才记失败
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          if (group.has(key) || isDownloadPaused(key)) return
+          if (attempt > 0) await backoff(attempt - 1)
+          try {
+            bytes = await host!.callBytes(
+              'fetchImageBytes',
+              { url: pages[index].url, taskGroupKey: key },
+              { timeoutMs: 60_000 },
+            )
+            if (!bytes?.length) throw new Error('图片内容为空')
+            break
+          } catch (err) {
+            lastError = err
+            if (attempt === maxRetries) break
+          }
+        }
+        if (bytes?.length) {
           images[index] = bytes
-        } catch (err) {
-          failure = `第 ${index + 1} 页下载失败: ${(err as Error)?.message ?? err}`
+          // 每页成功即落盘, 供断点续传; await 保证暂停/退出时字节已写入 DB
+          if (cacheKey) await cachePutPage(cacheKey, index, bytes)
+          loaded++
+          report('images', loaded, pages.length)
+        } else if (!isDownloadPaused(key)) {
+          failure = `第 ${index + 1} 页下载失败: ${(lastError as Error)?.message ?? lastError}`
           return
         }
-        loaded++
-        report('images', loaded, pages.length)
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, pages.length) }, () => worker()))
 
+    if (isDownloadPaused(key)) {
+      report('cancelled', loaded, pages.length, 'paused')
+      return { ok: false, fileName: '', error: 'paused' }
+    }
     if (group.has(key)) {
       report('cancelled', loaded, pages.length)
       return { ok: false, fileName: '', error: 'cancelled' }
@@ -199,6 +265,7 @@ export async function downloadChapterAsCbz(
   } finally {
     host?.dispose()
     activeGroups.delete(key)
+    clearPauseFlag(key)
   }
 }
 

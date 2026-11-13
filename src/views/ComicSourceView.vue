@@ -13,7 +13,7 @@ import {
   type ComicPluginHost,
 } from '../services/comicPlugin'
 import { bytesToObjectUrl } from '../services/comicPlugin/download'
-import { cancel as cancelTask, enqueue, findTask, initDownloads } from '../services/comicPlugin/downloadCenter'
+import { cancel as cancelTask, enqueue, findTask, initDownloads, resume } from '../services/comicPlugin/downloadCenter'
 import type { DetailChip, DetailMetaGroup } from '../services/comicPlugin/normalize'
 import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
 import { useLibrary } from '../stores/library'
@@ -278,7 +278,9 @@ async function openDownloaded(chapter: ComicChapter) {
 
 /** 章节行下载按钮: 已入库就直接读, 否则进下载队列 */
 function onChapterAction(chapter: ComicChapter) {
-  if (taskOf(chapter)?.status === 'done') { void openDownloaded(chapter); return }
+  const task = taskOf(chapter)
+  if (task?.status === 'done') { void openDownloaded(chapter); return }
+  if (task?.status === 'paused') { resume(task.id); return }
   void download(chapter)
 }
 
@@ -291,6 +293,7 @@ function downloadLabel(chapter: ComicChapter): string {
   const task = taskOf(chapter)
   if (!task) return t('comics.download')
   if (task.status === 'done') return t('downloads.groupDone')
+  if (task.status === 'paused') return t('downloads.paused')
   if (task.status === 'failed' || task.status === 'interrupted') return t('downloads.retry')
   if (task.phase === 'images' && task.total) return `${task.loaded}/${task.total}`
   if (task.phase === 'packing' || task.phase === 'importing') return t('comics.packing')
@@ -433,7 +436,7 @@ function openReader(chapter: ComicChapter) {
             {{ downloadLabel(chapter) }}
           </button>
           <button
-            v-if="taskOf(chapter)?.status === 'queued' || taskOf(chapter)?.status === 'running'"
+            v-if="taskOf(chapter)?.status === 'queued' || taskOf(chapter)?.status === 'running' || taskOf(chapter)?.status === 'paused'"
             class="btn btn-ghost"
             :title="t('comics.cancel')"
             @click="cancel(chapter)"

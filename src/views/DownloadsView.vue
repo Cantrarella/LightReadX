@@ -11,7 +11,8 @@ import { readerPath } from '../services/readerRoute'
 import { toast } from '../services/toast'
 import {
   clearFinished, downloadState, failedTasks, finishedTasks,
-  initDownloads, remove, retry, cancel, type DownloadTask,
+  initDownloads, remove, retry, cancel, pause, resume, pauseAll, resumeAll,
+  type DownloadTask,
 } from '../services/comicPlugin/downloadCenter'
 
 const router = useRouter()
@@ -24,9 +25,11 @@ onMounted(() => {
 
 const pendingTasks = computed(() => downloadState.tasks.filter(t => t.status === 'queued'))
 const runningTasks = computed(() => downloadState.tasks.filter(t => t.status === 'running'))
+const pausedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'paused'))
 const failedList = computed(() => failedTasks.value)
 const doneList = computed(() => finishedTasks.value)
 const totalCount = computed(() => downloadState.tasks.length)
+const activeCount = computed(() => runningTasks.value.length + pendingTasks.value.length + pausedTasks.value.length)
 
 function percent(task: DownloadTask): number {
   if (task.status === 'done') return 100
@@ -36,6 +39,7 @@ function percent(task: DownloadTask): number {
 
 function statusText(task: DownloadTask): string {
   if (task.status === 'queued') return t('downloads.queued')
+  if (task.status === 'paused') return t('downloads.paused')
   if (task.status === 'cancelled') return t('downloads.cancelled')
   if (task.status === 'interrupted') return t('downloads.interrupted')
   if (task.status === 'failed') return task.error || t('downloads.failedLabel')
@@ -75,6 +79,8 @@ function retryAll() {
         <span class="count">{{ t('downloads.count', { count: totalCount }) }}</span>
       </div>
       <div class="spacer" />
+      <button v-if="runningTasks.length" class="btn" @click="pauseAll">{{ t('downloads.pauseAll') }}</button>
+      <button v-if="pausedTasks.length" class="btn" @click="resumeAll">{{ t('downloads.resumeAll') }}</button>
       <button v-if="failedList.length" class="btn" @click="retryAll">{{ t('downloads.retryAll') }}</button>
       <button v-if="failedList.length" class="btn" @click="clearOnly('failed')">{{ t('downloads.clearFailed') }}</button>
       <button v-if="doneList.length" class="btn" @click="clearOnly('done')">{{ t('downloads.clearDone') }}</button>
@@ -84,8 +90,8 @@ function retryAll() {
     <p v-if="!totalCount" class="empty-title">{{ t('downloads.emptyTitle') }}</p>
     <p v-if="!totalCount" class="hint">{{ t('downloads.emptyHint') }}</p>
 
-    <section v-if="runningTasks.length || pendingTasks.length" class="group">
-      <h2 class="group-title">{{ t('downloads.groupActive') }} <span class="badge">{{ runningTasks.length + pendingTasks.length }}</span></h2>
+    <section v-if="activeCount" class="group">
+      <h2 class="group-title">{{ t('downloads.groupActive') }} <span class="badge">{{ activeCount }}</span></h2>
       <div class="task-list">
         <div v-for="task in [...runningTasks, ...pendingTasks]" :key="task.id" class="task">
           <div class="task-main">
@@ -94,6 +100,18 @@ function retryAll() {
           </div>
           <div class="task-status">{{ statusText(task) }}</div>
           <div class="task-actions">
+            <button class="btn btn-ghost" @click="pause(task.id)">{{ t('downloads.pause') }}</button>
+            <button class="btn btn-ghost" @click="cancel(task.id)">{{ t('comics.cancel') }}</button>
+          </div>
+        </div>
+        <div v-for="task in pausedTasks" :key="task.id" class="task paused">
+          <div class="task-main">
+            <div class="task-title">{{ task.comicTitle }}<span class="task-chapter">{{ task.chapterName }}</span></div>
+            <div class="bar-track"><div class="bar-fill" :style="{ width: percent(task) + '%' }" /></div>
+          </div>
+          <div class="task-status">{{ statusText(task) }}</div>
+          <div class="task-actions">
+            <button class="btn btn-primary" @click="resume(task.id)">{{ t('downloads.resume') }}</button>
             <button class="btn btn-ghost" @click="cancel(task.id)">{{ t('comics.cancel') }}</button>
           </div>
         </div>
@@ -182,6 +200,7 @@ function retryAll() {
 .task-chapter { font-weight: 400; color: var(--text-3); font-size: 13px; margin-left: 10px; }
 .task-reason { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
 .task.failed .task-reason { color: var(--danger, #d9534f); }
+.task.paused .bar-fill { background: var(--text-3); }
 .task-reason.missing { color: var(--danger, #d9534f); }
 .task-status { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
 .task-actions { display: flex; gap: 8px; flex: none; }
