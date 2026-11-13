@@ -7,6 +7,7 @@ export const router = createRouter({
     { path: '/', redirect: '/library' },
     { path: '/library', component: () => import('../views/LibraryView.vue') },
     { path: '/comics', component: () => import('../views/ComicsView.vue') },
+    { path: '/comics/source/:uuid', component: () => import('../views/ComicSourceView.vue') },
     { path: '/read-paper/:id', component: () => import('../views/PaperReaderView.vue') },
     { path: '/read/:id', component: () => import('../views/ReaderView.vue') },
     // 旧版 /read-pdf 已并入论文阅读器 (PDF 统一引擎)
