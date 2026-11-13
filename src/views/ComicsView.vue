@@ -23,6 +23,7 @@ import AppModal from '../components/AppModal.vue'
 const router = useRouter()
 const library = useLibrary()
 const keyword = ref('')
+const activeTab = ref<'local' | 'sources'>('local')
 const importing = ref(false)
 const fileInput = ref<HTMLInputElement>()
 const pluginFileInput = ref<HTMLInputElement>()
@@ -139,6 +140,10 @@ function openDiscover(plugin: InstalledComicPlugin) {
   router.push(`/comics/discover/${encodeURIComponent(plugin.uuid)}`)
 }
 
+function openSettings(plugin: InstalledComicPlugin) {
+  router.push(`/comics/settings/${encodeURIComponent(plugin.uuid)}`)
+}
+
 function openStore() {
   router.push('/comics/store')
 }
@@ -149,26 +154,36 @@ function openStore() {
     <header class="toolbar">
       <div class="heading">
         <h1>{{ t('nav.comics') }}</h1>
-        <span v-if="library.loaded" class="count">{{ t('comics.localCount', { count: localComics.length }) }}</span>
       </div>
       <div class="spacer" />
-      <div class="search-field">
+      <div v-if="activeTab === 'local'" class="search-field">
         <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <input v-model="keyword" class="search" type="search" :placeholder="t('comics.searchLocal')" :aria-label="t('comics.searchLocal')" />
       </div>
-      <button class="btn" @click="openStore">
+      <button v-if="activeTab === 'sources'" class="btn" @click="openStore">
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16v12H4zM4 10h16M9 6v12"/></svg>
         {{ t('comics.store') }}
       </button>
-      <button class="btn btn-primary" :disabled="importing" @click="fileInput?.click()">
+      <button v-if="activeTab === 'local'" class="btn btn-primary" :disabled="importing" @click="fileInput?.click()">
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
         {{ t('comics.import') }}
       </button>
       <input ref="fileInput" type="file" accept=".cbz,.cbr,application/x-cbz,application/x-cbr" multiple hidden @change="onFiles" />
     </header>
 
-    <section class="comic-section">
-      <h2 class="section-title">{{ t('comics.local') }}</h2>
+    <!-- 本地漫画与漫画源并排成两个标签页, 不再上下堆叠 -->
+    <div class="comic-tabs" role="tablist">
+      <button type="button" role="tab" class="comic-tab" :class="{ active: activeTab === 'local' }" :aria-selected="activeTab === 'local'" @click="activeTab = 'local'">
+        {{ t('comics.local') }}
+        <span class="tab-count">{{ localComics.length }}</span>
+      </button>
+      <button type="button" role="tab" class="comic-tab" :class="{ active: activeTab === 'sources' }" :aria-selected="activeTab === 'sources'" @click="activeTab = 'sources'">
+        {{ t('comics.sources') }}
+        <span class="tab-count">{{ plugins.length }}</span>
+      </button>
+    </div>
+
+    <section v-if="activeTab === 'local'" class="comic-section">
       <div v-if="filtered.length" class="grid">
         <BookCard
           v-for="book in filtered"
@@ -191,12 +206,10 @@ function openStore() {
       </div>
     </section>
 
-    <section class="comic-section">
+    <section v-else class="comic-section">
       <div class="section-head">
-        <h2 class="section-title">{{ t('comics.sources') }}</h2>
         <span v-if="plugins.length" class="count">{{ t('comics.sourceCount', { count: plugins.length }) }}</span>
         <div class="spacer" />
-        <button class="btn" @click="openStore">{{ t('comics.store') }}</button>
         <button class="btn" @click="showInstall = true">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
           {{ t('comics.installSource') }}
@@ -222,6 +235,7 @@ function openStore() {
           <div class="source-actions">
             <button class="btn btn-primary" :disabled="!plugin.enabled" @click="openSource(plugin)">{{ t('comics.openSource') }}</button>
             <button class="btn" :disabled="!plugin.enabled" @click="openDiscover(plugin)">{{ t('comics.discover') }}</button>
+            <button class="btn" @click="openSettings(plugin)">{{ t('comics.pluginSettings') }}</button>
             <button class="btn" @click="togglePlugin(plugin)">{{ plugin.enabled ? t('comics.disable') : t('comics.enable') }}</button>
             <button class="btn btn-ghost" @click="uninstall(plugin)">{{ t('comics.uninstall') }}</button>
           </div>
@@ -240,19 +254,21 @@ function openStore() {
     </section>
 
     <AppModal v-if="showInstall" :title="t('comics.installSource')" :description="t('comics.installHint')" @close="showInstall = false">
-      <div class="install-tabs" role="tablist">
-        <button type="button" :class="{ active: installMode === 'file' }" role="tab" :aria-selected="installMode === 'file'" @click="installMode = 'file'">{{ t('comics.installFromFile') }}</button>
-        <button type="button" :class="{ active: installMode === 'url' }" role="tab" :aria-selected="installMode === 'url'" @click="installMode = 'url'">{{ t('comics.installFromUrl') }}</button>
-      </div>
-      <div v-if="installMode === 'file'" class="install-body">
-        <button class="btn btn-primary" :disabled="installing" @click="pluginFileInput?.click()">{{ t('comics.choosePluginFile') }}</button>
-        <input ref="pluginFileInput" type="file" accept=".js,.cjs,.mjs,text/javascript,application/javascript" multiple hidden @change="onPluginFiles" />
-        <p class="hint">{{ t('comics.pluginFileHint') }}</p>
-      </div>
-      <div v-else class="install-body">
-        <input v-model="installUrl" class="search install-input" type="url" :placeholder="t('comics.sourceUrlPlaceholder')" @keyup.enter="onInstallUrl" />
-        <button class="btn btn-primary" :disabled="installing || !installUrl.trim()" @click="onInstallUrl">{{ t('comics.install') }}</button>
-        <p class="hint">{{ t('comics.urlHint') }}</p>
+      <div class="install-dialog">
+        <div class="install-tabs" role="tablist">
+          <button type="button" :class="{ active: installMode === 'file' }" role="tab" :aria-selected="installMode === 'file'" @click="installMode = 'file'">{{ t('comics.installFromFile') }}</button>
+          <button type="button" :class="{ active: installMode === 'url' }" role="tab" :aria-selected="installMode === 'url'" @click="installMode = 'url'">{{ t('comics.installFromUrl') }}</button>
+        </div>
+        <div v-if="installMode === 'file'" class="install-body">
+          <button class="btn btn-primary" :disabled="installing" @click="pluginFileInput?.click()">{{ t('comics.choosePluginFile') }}</button>
+          <input ref="pluginFileInput" type="file" accept=".js,.cjs,.mjs,text/javascript,application/javascript" multiple hidden @change="onPluginFiles" />
+          <p class="hint">{{ t('comics.pluginFileHint') }}</p>
+        </div>
+        <div v-else class="install-body">
+          <input v-model="installUrl" class="search install-input" type="url" :placeholder="t('comics.sourceUrlPlaceholder')" @keyup.enter="onInstallUrl" />
+          <button class="btn btn-primary" :disabled="installing || !installUrl.trim()" @click="onInstallUrl">{{ t('comics.install') }}</button>
+          <p class="hint">{{ t('comics.urlHint') }}</p>
+        </div>
       </div>
     </AppModal>
   </div>
@@ -288,7 +304,17 @@ function openStore() {
 .search-field { position: relative; display: flex; align-items: center; width: 260px; max-width: 100%; }
 .search-icon { position: absolute; left: 12px; color: var(--text-3); pointer-events: none; }
 .search { width: 100%; padding-left: 34px; padding-right: 30px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
-.comic-section { margin-top: 8px; }
+.comic-section { margin-top: 12px; }
+.comic-tabs { display: flex; gap: 4px; margin: 4px 0 0; border-bottom: 1px solid var(--line); }
+.comic-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 0; background: none; color: var(--text-3);
+  padding: 10px 16px 12px; font-size: 14px; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.comic-tab:hover { color: var(--text); }
+.comic-tab.active { color: var(--text); border-bottom-color: var(--accent, currentColor); font-weight: 650; }
+.tab-count { font-size: 11px; color: var(--text-3); background: var(--surface-2); border-radius: 999px; padding: 1px 7px; }
 .section-title { font-size: 15px; font-weight: 650; margin: 18px 0 14px; color: var(--text-2); }
 .section-head { display: flex; align-items: center; gap: 10px; }
 .section-head .section-title { margin-right: 0; }
@@ -329,7 +355,8 @@ function openStore() {
 .source-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .source-actions .btn { flex: 1; white-space: nowrap; }
 
-/* ---- 安装弹窗 ---- */
+/* ---- 安装弹窗: AppModal 的 body 没有内边距, 这里自己留白避免按钮贴边 ---- */
+.install-dialog { padding: 16px 20px 20px; }
 .install-tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .install-tabs button { border: 0; background: none; color: var(--text-3); padding: 8px 14px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; }
 .install-tabs button.active { color: var(--text); border-bottom-color: var(--accent, currentColor); font-weight: 600; }

@@ -9,6 +9,7 @@ export const router = createRouter({
     { path: '/comics', component: () => import('../views/ComicsView.vue') },
     { path: '/comics/store', component: () => import('../views/ComicStoreView.vue') },
     { path: '/comics/discover/:uuid', component: () => import('../views/ComicDiscoverView.vue') },
+    { path: '/comics/settings/:uuid', component: () => import('../views/ComicPluginSettingsView.vue') },
     { path: '/comics/source/:uuid', component: () => import('../views/ComicSourceView.vue') },
     { path: '/read-paper/:id', component: () => import('../views/PaperReaderView.vue') },
     { path: '/read/:id', component: () => import('../views/ReaderView.vue') },

@@ -7,7 +7,8 @@
  *   scene.body.request.fnPath → 插件自定义列表数据函数, 宿主按 page 分页调用
  *
  * 首版实现四种区块 (chip-list / action-grid / comic-section-list / comic-grid)
- * 与列表分页; 筛选 bundle 只取值不做二级联动面板。收藏相关 action 明确不支持。
+ * 与列表分页; 兼容新旧两种 scene 写法 (body.request / list), 并把插件的
+ * getPluginCloudFavoritePagesBundle 合并成「云端收藏」tab。
  */
 import { withPlugin, type ComicPluginHost } from './index'
 import { coverUrl } from './normalize'
@@ -87,10 +88,18 @@ export interface ScenePage {
   extern?: Record<string, unknown>
 }
 
+export interface FilterOption {
+  label: string
+  value: unknown
+  result?: Record<string, unknown>
+  /** Breeze 筛选支持 children 二级联动 (如「同人 → 汉化 / 日语」) */
+  children?: FilterOption[]
+}
+
 export interface FilterField {
   key: string
   label: string
-  options: Array<{ label: string; value: unknown; result?: Record<string, unknown>; children?: unknown[] }>
+  options: FilterOption[]
 }
 
 function obj(value: unknown): Record<string, unknown> {
@@ -198,12 +207,17 @@ function normalizeTab(raw: unknown, index: number): DiscoverTab | null {
 
 export function normalizeScene(raw: unknown): ComicListScene | null {
   const s = obj(raw)
-  const request = obj(obj(s.body).request)
+  const body = obj(s.body)
+  // 新版协议: scene.body.request; 老插件 (禁漫「最新」/「排行榜」) 直接给 scene.list
+  const request = obj(body.request ?? s.list)
   if (!text(request.fnPath)) return null
   return {
     title: text(s.title),
     source: text(s.source),
-    body: { type: text(obj(s.body).type), request: normalizeRequest(request) },
+    body: {
+      type: text(body.type) || (s.list ? 'pluginPagedComicList' : ''),
+      request: normalizeRequest(request),
+    },
     ...(s.filter ? { filter: normalizeRequest(obj(s.filter)) } : {}),
   }
 }
@@ -228,21 +242,23 @@ export function normalizeHomeBundle(raw: unknown): DiscoverHome {
 /** 读取插件发现页, 按能力逐级回退, 老插件也能给出可用入口 */
 export async function loadDiscoverHome(uuid: string): Promise<DiscoverHome> {
   return withPlugin(uuid, async host => {
+    let home: DiscoverHome | undefined
+
     if (host.hasFn('getPluginHomePagesBundle')) {
       try {
         const raw = await host.call('getPluginHomePagesBundle', { core: {}, extern: { source: uuid } }, { timeoutMs: 60_000 })
-        const home = normalizeHomeBundle(raw)
-        if (home.tabs.length) return home
+        const parsed = normalizeHomeBundle(raw)
+        if (parsed.tabs.length) home = parsed
       } catch { /* 落到下一级回退 */ }
     }
-    if (host.hasFn('getComicListSceneBundle')) {
+    if (!home && host.hasFn('getComicListSceneBundle')) {
       try {
         const raw = await host.call('getComicListSceneBundle', {}, { timeoutMs: 60_000 })
         const scene = normalizeScene(obj(obj(raw).data).scene ?? obj(raw).scene)
-        if (scene) return { tabs: [{ id: 'home', title: scene.title || '发现', kind: 'scene', scene }] }
+        if (scene) home = { tabs: [{ id: 'home', title: scene.title || '发现', kind: 'scene', scene }] }
       } catch { /* 落到下一级回退 */ }
     }
-    if (host.hasFn('getFunctionPage')) {
+    if (!home && host.hasFn('getFunctionPage')) {
       // 部分插件只给 getInfo().function 入口, 聚合为一个功能宫格
       const info = await host.call<{ function?: unknown[] }>('getInfo', {}, { timeoutMs: 20_000 })
       const tiles: DiscoverTile[] = arr(info?.function).map(item => {
@@ -250,7 +266,7 @@ export async function loadDiscoverHome(uuid: string): Promise<DiscoverHome> {
         return { title: text(f.title) || text(f.id), cover: '', action: actionOf(f.action) }
       }).filter(tile => tile.title && tile.action)
       if (tiles.length) {
-        return {
+        home = {
           tabs: [{
             id: 'functions', title: '功能', kind: 'page',
             page: {
@@ -264,8 +280,43 @@ export async function loadDiscoverHome(uuid: string): Promise<DiscoverHome> {
         }
       }
     }
-    return { tabs: [], notice: 'noHome' }
+
+    const result = home ?? { tabs: [], notice: 'noHome' } as DiscoverHome
+    // 云端收藏是插件独立 bundle, 宿主合并成一个 tab, 不需要用户去点功能宫格
+    if (result.tabs.length && host.hasFn('getPluginCloudFavoritePagesBundle')) {
+      try {
+        const raw = await host.call('getPluginCloudFavoritePagesBundle', { core: {}, extern: { source: uuid } }, { timeoutMs: 20_000 })
+        const extra = normalizeHomeBundle(raw)
+        const existing = new Set(result.tabs.map(t => t.id))
+        for (const [index, tab] of extra.tabs.entries()) {
+          const id = 'cloudFavorite:' + (tab.id || index)
+          if (existing.has(id)) continue
+          result.tabs.push({ ...tab, id, title: tab.title || '云端收藏' })
+        }
+      } catch { /* 插件不支持或需要登录时忽略 */ }
+    }
+    return result
   })
+}
+
+/** 进入漫画源时默认展示的漫画列表: 取第一个能拿到内容的 tab */
+export async function loadHomeItems(uuid: string, limit = 30): Promise<{ items: DiscoverItem[]; title: string }> {
+  const home = await loadDiscoverHome(uuid)
+  for (const tab of home.tabs) {
+    try {
+      if (tab.kind === 'scene' && tab.scene) {
+        const page = await loadScenePage(uuid, tab.scene, 1)
+        if (page.items.length) return { items: page.items.slice(0, limit), title: tab.title }
+      } else if (tab.kind === 'page' && tab.page) {
+        const items = tab.page.blocks.flatMap(block => [
+          ...block.items,
+          ...block.sections.flatMap(section => section.items),
+        ])
+        if (items.length) return { items: items.slice(0, limit), title: tab.title }
+      }
+    } catch { /* 单个 tab 失败继续试下一个 */ }
+  }
+  return { items: [], title: '' }
 }
 
 /** 打开 getInfo().function 里声明的 openPluginFunction 功能页 */
@@ -303,6 +354,16 @@ export async function loadScenePage(
   })
 }
 
+function normalizeFilterOption(raw: unknown): FilterOption {
+  const o = obj(raw)
+  const children = arr(o.children).map(normalizeFilterOption)
+  return {
+    label: text(o.label), value: o.value,
+    result: obj(o.result),
+    ...(children.length ? { children } : {}),
+  }
+}
+
 /** 读取列表筛选配置 (scheme.fields + data.values), 没有配置返回空 */
 export async function loadSceneFilter(uuid: string, scene: ComicListScene): Promise<FilterField[]> {
   const request = scene.filter
@@ -315,13 +376,7 @@ export async function loadSceneFilter(uuid: string, scene: ComicListScene): Prom
         const f = obj(field)
         return {
           key: text(f.key), label: text(f.label) || text(f.key),
-          options: arr(f.options).map(option => {
-            const o = obj(option)
-            return {
-              label: text(o.label), value: o.value,
-              result: obj(o.result), children: arr(o.children),
-            }
-          }),
+          options: arr(f.options).map(normalizeFilterOption),
         }
       }).filter(f => f.key && f.options.length)
     } catch { return [] }

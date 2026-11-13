@@ -64,6 +64,8 @@ export interface OpenOptions {
   cancelledGroups?: Set<string>
   /** 测试时可注入自定义请求实现 */
   request?: (init: PluginRequestInit) => Promise<PluginResponse>
+  /** 插件通过 flutter.showToast 发的提示 */
+  onToast?: (message: string) => void
   log?: HostOptions['log']
 }
 
@@ -75,8 +77,10 @@ export async function openPlugin(uuid: string, opts: OpenOptions = {}): Promise<
   return createComicPluginHost({
     code: plugin.code,
     request: opts.request ?? defaultPluginRequest,
+    pluginUuid: uuid,
     pluginConfig: registry.getPluginConfig(uuid),
     onConfigSave: (key, value) => registry.setPluginConfigValue(uuid, key, value),
+    onToast: opts.onToast,
     cancelledGroups: opts.cancelledGroups,
     log: opts.log,
   })
@@ -186,6 +190,11 @@ export async function chapter(uuid: string, comicId: string, chapterId: string):
 
 export async function image(uuid: string, url: string, taskGroupKey?: string): Promise<Uint8Array> {
   return withPlugin(uuid, host => host.callBytes('fetchImageBytes', { url, taskGroupKey }, { timeoutMs: 60_000 }))
+}
+
+/** 插件抛出的登录失效错误, UI 层据此跳插件设置 / 登录页 */
+export function isUnauthorizedError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: string }).code === 'unauthorized'
 }
 
 /** 插件可自定义下载并发, 宿主钳制到 1~32, 默认 5 */

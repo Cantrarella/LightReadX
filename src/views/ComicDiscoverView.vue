@@ -12,7 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { toast } from '../services/toast'
 import { openExternalLink } from '../services/transfer'
-import { getPlugin, openPlugin, type ComicPluginHost } from '../services/comicPlugin'
+import { getPlugin, isUnauthorizedError, openPlugin, type ComicPluginHost } from '../services/comicPlugin'
 import { bytesToObjectUrl } from '../services/comicPlugin/download'
 import AppModal from '../components/AppModal.vue'
 import {
@@ -41,9 +41,11 @@ const sceneMax = ref(false)
 const sceneExtern = ref<Record<string, unknown> | undefined>()
 const filters = ref<FilterField[]>([])
 const filterSelection = reactive<Record<string, number>>({})
+const childSelection = reactive<Record<string, number>>({})
 const showFilter = ref(false)
 const loading = ref(false)
 const error = ref('')
+const needLogin = ref(false)
 const covers = reactive<Record<string, string>>({})
 
 let coverHost: ComicPluginHost | null = null
@@ -58,12 +60,17 @@ onBeforeUnmount(() => {
 async function loadHome() {
   loading.value = true
   error.value = ''
+  needLogin.value = false
   overlay.value = null
   try {
     home.value = await loadDiscoverHome(uuid)
-    activeTab.value = home.value.tabs[0]?.id ?? ''
-  } catch (e: any) {
-    error.value = e?.message ?? String(e)
+    // 设置页 / 外部链接可用 ?tab=cloudFavorite 直接落到云端收藏 tab
+    const requested = String(route.query.tab ?? '')
+    const match = home.value.tabs.find(tab => tab.id === requested)
+      ?? (requested === 'cloudFavorite' ? home.value.tabs.find(tab => tab.id.startsWith('cloudFavorite:')) : undefined)
+    activeTab.value = match?.id ?? home.value.tabs[0]?.id ?? ''
+  } catch (e) {
+    handleError(e)
   } finally {
     loading.value = false
   }
@@ -126,9 +133,35 @@ function visibleCovers(): Array<{ id: string; cover: string }> {
   return out
 }
 
+/** 登录失效等错误的统一处理 */
+function handleError(e: unknown) {
+  if (isUnauthorizedError(e)) {
+    needLogin.value = true
+    error.value = t('comics.loginRequired')
+  } else {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function goToSettings() {
+  void router.push(`/comics/settings/${encodeURIComponent(uuid)}`)
+}
+
+/** 当前选中项的二级选项 (Breeze children 联动) */
+function childOptions(field: FilterField) {
+  const index = filterSelection[field.key]
+  return index == null ? [] : field.options[index]?.children ?? []
+}
+
+function selectFilter(field: FilterField, index: number) {
+  filterSelection[field.key] = index
+  delete childSelection[field.key]
+}
+
 /** 当前视图 (tab / overlay) 变化时重新拉数据 */
 async function reloadView() {
   error.value = ''
+  needLogin.value = false
   const scene = currentScene.value
   const fn = overlay.value?.kind === 'function' ? overlay.value : null
   if (!scene && !fn) {
@@ -145,11 +178,12 @@ async function reloadView() {
       sceneMax.value = false
       filters.value = await loadSceneFilter(uuid, scene)
       for (const key of Object.keys(filterSelection)) delete filterSelection[key]
+      for (const key of Object.keys(childSelection)) delete childSelection[key]
       await fetchScenePage(1)
     }
     void loadCovers(visibleCovers())
-  } catch (e: any) {
-    error.value = e?.message ?? String(e)
+  } catch (e) {
+    handleError(e)
   } finally {
     loading.value = false
   }
@@ -162,7 +196,12 @@ async function fetchScenePage(page: number) {
   if (!scene) return
   const chosen = filters.value.flatMap(field => {
     const index = filterSelection[field.key]
-    return index == null ? [] : [field.options[index] ?? { result: undefined }]
+    if (index == null) return []
+    const option = field.options[index]
+    if (!option) return []
+    const childIndex = childSelection[field.key]
+    const child = childIndex == null ? undefined : option.children?.[childIndex]
+    return child ? [option, child] : [option]
   })
   const { core, extern } = mergeFilterResult(chosen)
   const result = await loadScenePage(uuid, scene, page, {
@@ -178,20 +217,22 @@ async function loadMore() {
   if (sceneMax.value || loading.value) return
   loading.value = true
   try { await fetchScenePage(scenePage.value + 1); void loadCovers(visibleCovers()) }
-  catch (e: any) { error.value = e?.message ?? String(e) }
+  catch (e) { handleError(e) }
   finally { loading.value = false }
 }
 
 async function applyFilter() {
   showFilter.value = false
+  needLogin.value = false
   loading.value = true
   try { await fetchScenePage(1); void loadCovers(visibleCovers()) }
-  catch (e: any) { error.value = e?.message ?? String(e) }
+  catch (e) { handleError(e) }
   finally { loading.value = false }
 }
 
 function resetFilter() {
   for (const key of Object.keys(filterSelection)) delete filterSelection[key]
+  for (const key of Object.keys(childSelection)) delete childSelection[key]
   void applyFilter()
 }
 
@@ -270,6 +311,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
       <div class="heading"><h1>{{ heading }}</h1></div>
       <div class="spacer" />
       <button v-if="currentScene && filters.length" class="btn" @click="showFilter = true">{{ t('comics.discoverFilter') }}</button>
+      <button class="btn" @click="goToSettings">{{ t('comics.pluginSettings') }}</button>
       <button class="btn" :disabled="loading" @click="overlay ? reloadView() : loadHome()">
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
         {{ t('comics.discoverRefresh') }}
@@ -287,7 +329,11 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
       </div>
 
       <p v-if="loading" class="hint loading-hint">{{ t('comics.discoverLoading') }}</p>
-      <p v-if="error" class="error-text">{{ t('comics.discoverFailed') }}：{{ error }}</p>
+      <p v-if="error" class="error-text">{{ error }}</p>
+      <div v-if="needLogin" class="login-prompt">
+        <span>{{ t('comics.loginRequiredHint') }}</span>
+        <button class="btn btn-primary" @click="goToSettings">{{ t('comics.goLogin') }}</button>
+      </div>
 
       <!-- 四种 scheme 区块 -->
       <template v-if="currentBlocks.length">
@@ -387,19 +433,29 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
     </template>
 
     <AppModal v-if="showFilter" :title="t('comics.discoverFilter')" @close="showFilter = false">
-      <div v-for="field in filters" :key="field.key" class="filter-group">
+      <div class="filter-dialog">
+        <div v-for="field in filters" :key="field.key" class="filter-group">
         <h3 class="filter-label">{{ field.label }}</h3>
         <div class="chip-row">
           <button
             v-for="(option, i) in field.options" :key="`${field.key}-${i}`" type="button" class="chip"
             :class="{ active: filterSelection[field.key] === i }"
-            @click="filterSelection[field.key] = i"
+            @click="selectFilter(field, i)"
           >{{ option.label }}</button>
         </div>
+        <div v-if="childOptions(field).length" class="chip-row child-row">
+          <span class="child-label">{{ t('comics.filterSub') }}</span>
+          <button
+            v-for="(child, i) in childOptions(field)" :key="`${field.key}-child-${i}`" type="button" class="chip"
+            :class="{ active: childSelection[field.key] === i }"
+            @click="childSelection[field.key] = i"
+          >{{ child.label }}</button>
+        </div>
       </div>
-      <div class="filter-actions">
-        <button class="btn" @click="resetFilter">{{ t('comics.discoverFilterClear') }}</button>
-        <button class="btn btn-primary" @click="applyFilter">{{ t('comics.discoverFilterApply') }}</button>
+        <div class="filter-actions">
+          <button class="btn" @click="resetFilter">{{ t('comics.discoverFilterClear') }}</button>
+          <button class="btn btn-primary" @click="applyFilter">{{ t('comics.discoverFilterApply') }}</button>
+        </div>
       </div>
     </AppModal>
   </div>
@@ -417,7 +473,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 0 calc(-1 * var(--page-x)) 12px;
-  padding: var(--page-top) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
+  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 16px var(--page-x);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border-bottom: 1px solid transparent;
@@ -482,7 +538,16 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 .empty-title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
 .empty-actions { margin-top: 16px; }
 
+.filter-dialog { padding: 16px 20px 20px; }
 .filter-group { margin-bottom: 18px; }
 .filter-label { font-size: 13px; font-weight: 600; margin: 0 0 10px; }
+.child-row { margin-top: 10px; align-items: center; }
+.child-label { color: var(--text-3); font-size: 12px; margin-right: 2px; }
+.login-prompt {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 16px; margin: 12px 0;
+  border: 1px solid var(--border, var(--surface-2)); border-radius: 10px;
+  background: var(--surface-2); color: var(--text-2); font-size: 13px;
+}
 .filter-actions { display: flex; gap: 10px; justify-content: flex-end; }
 </style>

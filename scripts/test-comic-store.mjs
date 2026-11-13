@@ -219,5 +219,40 @@ const merged = discover.mergeFilterResult([
 assert.deepEqual(merged, { core: { type: 'comic' }, extern: { rankType: 'day', lang: 'zh' } })
 assert.deepEqual(discover.mergeFilterResult([{}]), { core: {}, extern: {} })
 
-console.log('test-comic-store: OK (index / version / bundle / links / cache / state / scheme / tabs / filter)')
+// ---- 12. 老插件 scene.list 写法 (禁漫「最新」/「排行榜」按钮) ----
+const legacy = discover.normalizeScene({
+  title: '最新', source: 'jm',
+  list: { fnPath: 'getLatestData', core: {}, extern: { source: 'latest' } },
+  filter: { fnPath: 'getRankingFilterBundle', core: {}, extern: { source: 'ranking' } },
+})
+assert.ok(legacy, 'scene.list 必须能解析, 否则按钮点击无反应')
+assert.equal(legacy.body.request.fnPath, 'getLatestData')
+assert.deepEqual(legacy.body.request.extern, { source: 'latest' })
+assert.equal(legacy.body.type, 'pluginPagedComicList')
+assert.equal(legacy.filter.fnPath, 'getRankingFilterBundle')
+
+// ---- 13. 云端收藏 tab (getPluginCloudFavoritePagesBundle 的 scene) ----
+const cloudHome = discover.normalizeHomeBundle({
+  data: { tabs: [{
+    id: 'cloudFavorite', title: '云端收藏',
+    scene: {
+      title: '云端收藏', source: 'jm',
+      body: { type: 'pluginPagedComicList', request: { fnPath: 'getCloudFavoriteData', extern: { source: 'cloudFavorite', folderId: '' } } },
+      filter: { fnPath: 'getCloudFavoriteFilterBundle' },
+    },
+  }] },
+})
+assert.equal(cloudHome.tabs.length, 1)
+assert.equal(cloudHome.tabs[0].kind, 'scene')
+assert.equal(cloudHome.tabs[0].scene.body.request.fnPath, 'getCloudFavoriteData')
+assert.equal(cloudHome.tabs[0].scene.filter.fnPath, 'getCloudFavoriteFilterBundle')
+
+// ---- 14. 二级筛选的 result 要能和父级一起合并 ----
+const nested = discover.mergeFilterResult([
+  { result: { extern: { type: 'doujin' } } },
+  { result: { extern: { type: 'doujin_chinese' } } },
+])
+assert.deepEqual(nested, { core: {}, extern: { type: 'doujin_chinese' } }, '子选项应覆盖父选项的同名参数')
+
+console.log('test-comic-store: OK (index / version / bundle / links / cache / state / scheme / tabs / scene.list / cloudFavorite / filter)')
 fs.rmSync(tmp, { recursive: true, force: true })

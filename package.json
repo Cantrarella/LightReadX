@@ -11,6 +11,7 @@
     "ios:ipa": "node scripts/build-ios.mjs --ipa",
     "test:comic-plugin": "node scripts/test-comic-plugin.mjs",
     "test:comic-store": "node scripts/test-comic-store.mjs",
+    "test:comic-account": "node scripts/test-comic-account.mjs",
     "test:book-sources": "node --experimental-strip-types --test scripts/test-catalog-errors.mjs scripts/test-open-library.mjs scripts/test-internet-archive.mjs scripts/test-philosophy-archive.mjs scripts/test-web-book-sources.mjs scripts/test-opds-download.mjs scripts/test-github-books.mjs scripts/test-book-query.mjs scripts/test-wendian.mjs",
     "test:archive": "node scripts/test-library-archive.mjs",
     "e2e:mobile": "node scripts/e2e-mobile.mjs",
@@ -107,6 +108,7 @@
   "dependencies": {
     "@embedpdf/pdfium": "^2.14.4",
     "@jitl/quickjs-singlefile-browser-release-sync": "^0.32.0",
+    "@noble/ciphers": "^1.3.0",
     "@noble/hashes": "^1.8.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",

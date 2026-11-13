@@ -77,6 +77,29 @@ globalThis.AbortController = class AbortController {
   abort(reason) { this.signal.aborted = true; this.signal.reason = reason ?? new Error('abort'); }
 };
 
+// ---- Breeze crypto 兼容对象 (不是 WebCrypto / Node crypto) ----
+// 字节参数打包成 {__b64} 跨 QuickJS 边界, 宿主侧用 runtime.ts 还原
+function __cryptoPack(x) {
+  if (x == null) return '';
+  if (typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean') return String(x);
+  var a;
+  if (x instanceof Uint8Array || (x && x.buffer && x.BYTES_PER_ELEMENT === 1)) a = x;
+  else if (x instanceof ArrayBuffer) a = new Uint8Array(x);
+  else if (Array.isArray(x)) a = Uint8Array.from(x);
+  else if (typeof x === 'object') {
+    var keys = Object.keys(x).filter(function (k) { return /^[0-9]+$/.test(k); })
+      .sort(function (m, n) { return Number(m) - Number(n); });
+    a = Uint8Array.from(keys.map(function (k) { return x[k] & 255; }));
+  } else return String(x);
+  return { __b64: globalThis.__bytesToBase64(a) };
+}
+function __cryptoCall(method, args) {
+  var packed = (args || []).map(__cryptoPack);
+  var r = JSON.parse(__hostCrypto(method, JSON.stringify(packed)));
+  if (r.error) throw new Error(r.error || 'crypto 调用失败');
+  if (r.type === 'bytes') return Uint8Array.from(atob(r.value), function (c) { return c.charCodeAt(0); });
+  return r.value;
+}
 globalThis.crypto = {
   createHmac(algo, key) {
     let data = '';
@@ -96,6 +119,32 @@ globalThis.crypto = {
   randomUUID() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
   }); },
+  randomBytes(n) { return __cryptoCall('randomBytes', [n]); },
+  md5(x) { return __cryptoCall('md5', [x]); },
+  sha1(x) { return __cryptoCall('sha1', [x]); },
+  sha256(x) { return __cryptoCall('sha256', [x]); },
+  sha512(x) { return __cryptoCall('sha512', [x]); },
+  hmacSha1(k, x) { return __cryptoCall('hmacSha1', [k, x]); },
+  hmacSha256(k, x) { return __cryptoCall('hmacSha256', [k, x]); },
+  hmacSha512(k, x) { return __cryptoCall('hmacSha512', [k, x]); },
+  aesEcbPkcs7Encrypt(x, k) { return __cryptoCall('aesEcbPkcs7Encrypt', [x, k]); },
+  aesEcbPkcs7Decrypt(x, k) { return __cryptoCall('aesEcbPkcs7Decrypt', [x, k]); },
+  aesCbcPkcs7Encrypt(x, k, iv) { return __cryptoCall('aesCbcPkcs7Encrypt', [x, k, iv]); },
+  aesCbcPkcs7Decrypt(x, k, iv) { return __cryptoCall('aesCbcPkcs7Decrypt', [x, k, iv]); },
+  aesGcmEncrypt(x, k, nonce, aad) { return __cryptoCall('aesGcmEncrypt', [x, k, nonce, aad]); },
+  aesGcmDecrypt(x, k, nonce, aad) { return __cryptoCall('aesGcmDecrypt', [x, k, nonce, aad]); },
+  aesEcbPkcs7DecryptB64(x, k) { return __cryptoCall('aesEcbPkcs7DecryptB64', [x, k]); },
+  aesEcbPkcs7EncryptB64(x, k) { return __cryptoCall('aesEcbPkcs7EncryptB64', [x, k]); },
+  aesCbcPkcs7EncryptB64(x, k, iv) { return __cryptoCall('aesCbcPkcs7EncryptB64', [x, k, iv]); },
+  aesCbcPkcs7DecryptB64(x, k, iv) { return __cryptoCall('aesCbcPkcs7DecryptB64', [x, k, iv]); },
+  aesGcmEncryptB64(x, k, nonce, aad) { return __cryptoCall('aesGcmEncryptB64', [x, k, nonce, aad]); },
+  aesGcmDecryptB64(x, k, nonce, aad) { return __cryptoCall('aesGcmDecryptB64', [x, k, nonce, aad]); },
+  timingSafeEqual(a, b) {
+    var x = String(a), y = String(b);
+    if (x.length !== y.length) return false;
+    var d = 0; for (var i = 0; i < x.length; i++) d |= x.charCodeAt(i) ^ y.charCodeAt(i);
+    return d === 0;
+  },
 };
 
 globalThis.console = { log:(...a)=>__hostLog(...a), warn:(...a)=>__hostLog(...a), error:(...a)=>__hostLog(...a) };
@@ -115,7 +164,17 @@ function __hostAsync(name, args) {
     globalThis.__pending[id] = { resolve, reject };
   });
 }
-globalThis.bridge = { call: (name, ...args) => __hostAsync(name, args), callSync: () => { throw new Error('callSync 未实现') } };
+globalThis.bridge = {
+  call: (name, ...args) => __hostAsync(name, args),
+  callSync: function (name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var r = JSON.parse(__hostSync(name, JSON.stringify(args)));
+    if (!r.ok) throw new Error(r.error || 'callSync 失败');
+    return r.value;
+  },
+  gzipCompress: function (x) { return JSON.parse(__hostSync('compression.gzip_compress', JSON.stringify([x]))).value; },
+  gzipDecompress: function (x) { return JSON.parse(__hostSync('compression.gzip_decompress', JSON.stringify([x]))).value; },
+};
 
 // ---- URL / URLSearchParams ----
 globalThis.URL = class URL {
@@ -185,5 +244,36 @@ globalThis.fetch = async function (url, init) {
   r.headers.has = function (k) { return (r.headers.raw || {})[String(k).toLowerCase()] != null; };
   r.blob = async function () { return { arrayBuffer: async () => (await r.arrayBuffer()), type: r.headers.get('content-type') || '' }; };
   return r;
+};
+
+// ---- Breeze 运行时全局工具 ----
+globalThis.bytesToBase64 = function (b) { return globalThis.__bytesToBase64(b); };
+globalThis.bytesFromBase64 = function (s) { return Uint8Array.from(atob(String(s)), function (c) { return c.charCodeAt(0); }); };
+globalThis.uuidv4 = globalThis.crypto.randomUUID;
+globalThis.base64 = { encode: globalThis.bytesToBase64, decode: globalThis.bytesFromBase64 };
+globalThis.structuredClone = function (x) { return x == null ? x : JSON.parse(JSON.stringify(x)); };
+var __timers = {}, __timerSeq = 0;
+globalThis.setTimeout = function (fn, ms) {
+  var id = ++__timerSeq;
+  __timers[id] = true;
+  __hostAsync('timer.sleep', [ms]).then(function () {
+    if (!__timers[id]) return;
+    delete __timers[id];
+    try { fn(); } catch (e) { console.error(e); }
+  });
+  return id;
+};
+globalThis.clearTimeout = function (id) { delete __timers[id]; };
+globalThis.queueMicrotask = function (fn) { Promise.resolve().then(fn); };
+var __nativePool = {}, __nativeSeq = 0;
+globalThis.native = {
+  put: function (x) { var id = ++__nativeSeq; __nativePool[id] = x; return id; },
+  take: function (id) { return __nativePool[id] ?? null; },
+  free: function (id) { delete __nativePool[id]; },
+};
+globalThis.path = {
+  join: function () { return Array.prototype.slice.call(arguments).join('/'); },
+  basename: function (p) { var parts = String(p).split('/'); return parts[parts.length - 1] || ''; },
+  dirname: function (p) { var parts = String(p).split('/'); parts.pop(); return parts.join('/') || '.'; },
 };
 `;

@@ -16,6 +16,7 @@ import {
   bytesToObjectUrl, cancelDownload, downloadChapterAsCbz, type DownloadProgress,
 } from '../services/comicPlugin/download'
 import { normalizeChapter } from '../services/comicPlugin/normalize'
+import { asSearchItem, loadHomeItems } from '../services/comicPlugin/discover'
 import type {
   ComicChapter, ComicChapterResult, ComicPaging, ComicSearchItem, ComicInfo, ComicPage,
 } from '../services/comicPlugin/types'
@@ -30,6 +31,12 @@ const view = ref<'search' | 'detail'>('search')
 const keyword = ref('')
 const page = ref(1)
 const items = ref<ComicSearchItem[]>([])
+const showingHome = ref(true)
+const homeItems = ref<ComicSearchItem[]>([])
+const homeTitle = ref('')
+const homeLoading = ref(false)
+const homeError = ref('')
+const displayItems = computed(() => showingHome.value ? homeItems.value : items.value)
 const paging = ref<ComicPaging | undefined>()
 const searching = ref(false)
 const searchError = ref('')
@@ -76,9 +83,26 @@ async function loadCovers(list: ComicSearchItem[]) {
   await Promise.all(Array.from({ length: 4 }, () => worker()))
 }
 
+/** 进入漫画源默认拉插件首页推荐, 不再是空白搜索页 */
+async function loadHome() {
+  homeLoading.value = true
+  homeError.value = ''
+  try {
+    const result = await loadHomeItems(uuid)
+    homeItems.value = result.items.map(asSearchItem)
+    homeTitle.value = result.title
+    void loadCovers(homeItems.value)
+  } catch (e) {
+    homeError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    homeLoading.value = false
+  }
+}
+
 async function doSearch(reset = true) {
   const kw = keyword.value.trim()
   if (!kw || searching.value) return
+  showingHome.value = false
   if (reset) { page.value = 1; items.value = []; paging.value = undefined }
   searching.value = true
   searchError.value = ''
@@ -147,7 +171,9 @@ onMounted(() => {
   if (keywordParam) {
     keyword.value = keywordParam
     void doSearch()
+    return
   }
+  void loadHome()
 })
 
 function taskKey(chapter: ComicChapter) {
@@ -303,9 +329,11 @@ function switchChapter(offset: number) {
     <!-- 搜索结果 -->
     <template v-else-if="view === 'search'">
       <p v-if="searchError" class="error-text">{{ searchError }}</p>
-      <p v-if="searching" class="hint loading-hint">{{ t('comics.searching') }}</p>
-      <div v-if="items.length" class="result-grid">
-        <button v-for="item in items" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
+      <p v-if="showingHome && homeError" class="error-text">{{ homeError }}</p>
+      <p v-if="searching || (showingHome && homeLoading)" class="hint loading-hint">{{ showingHome ? t('comics.homeLoading') : t('comics.searching') }}</p>
+      <h2 v-if="showingHome && homeTitle" class="section-title">{{ homeTitle }}</h2>
+      <div v-if="displayItems.length" class="result-grid">
+        <button v-for="item in displayItems" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
           <div class="result-cover">
             <img v-if="covers[item.id]" :src="covers[item.id]" alt="" loading="lazy" />
             <div v-else class="cover-placeholder" aria-hidden="true">
@@ -316,14 +344,14 @@ function switchChapter(offset: number) {
           <div class="result-subtitle">{{ item.subtitle || item.updatedAt || '' }}</div>
         </button>
       </div>
-      <div v-else-if="!searching && !searchError" class="empty">
+      <div v-else-if="!searching && !homeLoading && !searchError" class="empty">
         <div class="empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4" stroke-linecap="round"/></svg>
         </div>
-        <p class="empty-title">{{ keyword ? t('comics.noSearchResult') : t('comics.searchHintTitle') }}</p>
+        <p class="empty-title">{{ keyword ? t('comics.noSearchResult') : t('comics.homeEmpty') }}</p>
         <p class="hint">{{ t('comics.searchHint') }}</p>
       </div>
-      <div v-if="paging && page < paging.pages" class="load-more">
+      <div v-if="!showingHome && paging && page < paging.pages" class="load-more">
         <button class="btn" :disabled="searching" @click="loadMore">{{ t('comics.loadMore') }}</button>
       </div>
     </template>
@@ -410,7 +438,8 @@ function switchChapter(offset: number) {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 0 calc(-1 * var(--page-x)) 18px;
-  padding: var(--page-top) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
+  /* 自定义标题栏下多留一段, 避免标题和搜索框贴着窗口上沿 */
+  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 16px var(--page-x);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border-bottom: 1px solid transparent;
@@ -425,6 +454,7 @@ function switchChapter(offset: number) {
 .search { width: 100%; padding-left: 34px; padding-right: 30px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
 .hint { color: var(--text-3); font-size: 13px; line-height: 1.6; margin: 0; }
 .loading-hint { padding: 12px 0; }
+.section-title { font-size: 15px; font-weight: 600; margin: 4px 0 14px; color: var(--text-2); }
 .error-text { color: var(--danger, #d9534f); font-size: 13px; padding: 10px 0; }
 
 .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 22px 16px; }

@@ -15,12 +15,8 @@ import {
   type QuickJSWASMModule,
 } from 'quickjs-emscripten-core'
 import browserVariant from '@jitl/quickjs-singlefile-browser-release-sync'
-import { hmac } from '@noble/hashes/hmac'
-import { sha1 } from '@noble/hashes/sha1'
-import { sha256 } from '@noble/hashes/sha256'
-import { md5 } from '@noble/hashes/legacy'
-import { bytesToHex } from '@noble/hashes/utils'
 import { PLUGIN_PRELUDE } from './prelude'
+import { runCryptoMethod, runCryptoBridge, digest, hmacDigest } from './runtime'
 import type { PluginRequestInit, PluginResponse } from './types'
 
 // WASM 引擎只实例化一次, 后续每个插件用独立 Runtime/Context
@@ -37,14 +33,6 @@ function getEngine(): Promise<QuickJSWASMModule> {
   return enginePromise
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  }
-  return btoa(s)
-}
-
 function base64ToBytes(b64: string): Uint8Array {
   const s = atob(b64)
   const out = new Uint8Array(s.length)
@@ -52,22 +40,7 @@ function base64ToBytes(b64: string): Uint8Array {
   return out
 }
 
-function hashOf(algo: string) {
-  const a = String(algo || '').toLowerCase().replace(/[-_]/g, '')
-  if (a === 'sha1') return sha1
-  if (a === 'md5') return md5
-  return sha256
-}
-
-function hmacDigest(algo: string, key: string, data: string, enc: string): string {
-  const out = hmac(hashOf(algo), new TextEncoder().encode(key), new TextEncoder().encode(data))
-  return enc === 'base64' ? bytesToBase64(out) : bytesToHex(out)
-}
-
-function hashDigest(algo: string, data: string, enc: string): string {
-  const out = hashOf(algo)(new TextEncoder().encode(data))
-  return enc === 'base64' ? bytesToBase64(out) : bytesToHex(out)
-}
+// 哈希 / HMAC / AES 统一由 runtime.ts 实现, 这里只负责跨 QuickJS 边界的字节编解码
 
 export interface CallOptions {
   /** 默认 60s; 搜索 / 详情可短些, 图片下载可长些 */
@@ -83,8 +56,12 @@ export interface HostOptions {
   code: string
   /** 宿主发请求 (桌面端由上层注入 fetchRemote 实现) */
   request: (init: PluginRequestInit) => Promise<PluginResponse>
+  /** 插件 uuid, 用于隔离缓存与配置命名空间 */
+  pluginUuid?: string
   pluginConfig?: Record<string, unknown>
   onConfigSave?: (key: string, value: unknown) => void
+  /** 插件通过 flutter.showToast 发的提示 */
+  onToast?: (message: string) => void
   /** 已取消的下载任务组, 插件会在每步前查询 */
   cancelledGroups?: Set<string>
   log?: (...args: unknown[]) => void
@@ -128,21 +105,109 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   let seq = 0
   let disposed = false
 
+  // 插件缓存 (域名端点 / 响应等)。桌面与网页都落到 localStorage, 测试环境退化为内存。
+  const cachePrefix = `lrx.comic.cache.${options.pluginUuid || 'default'}.`
+  const memoryCache = new Map<string, string>()
+  const cacheRead = (k: string) => {
+    try { return localStorage.getItem(k) } catch { return memoryCache.get(k) ?? null }
+  }
+  const cacheWrite = (k: string, v: string) => {
+    try { localStorage.setItem(k, v) } catch { memoryCache.set(k, v) }
+  }
+  const cacheRemove = (k: string) => {
+    try { localStorage.removeItem(k) } catch { memoryCache.delete(k) }
+  }
+
+  /** Breeze kit 有两种配置读取写法: 老插件直接 JSON.parse 原值, 新插件期待 {ok,value} 包装 */
+  function readConfig(key: string, def?: unknown): unknown {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) return def ?? ''
+    const stored = config[key]
+    const raw = typeof stored === 'string' ? stored : JSON.stringify(stored)
+    const defText = typeof def === 'string' ? def : ''
+    // Breeze kit 把默认值 JSON.stringify 后传入, 并期待 {ok,value} 包装;
+    // 老插件 (WEBTOON) 直接传 "" 并自己 JSON.parse 原值, 两种写法都要兼容。
+    let defIsJson = false
+    if (defText) {
+      try { JSON.parse(defText); defIsJson = true } catch { /* 非 JSON 默认值 */ }
+    }
+    if (!defIsJson) return raw
+    let value: unknown = raw
+    try { value = JSON.parse(raw) } catch { /* 保持字符串 */ }
+    return JSON.stringify({ ok: true, value })
+  }
+
+  const nativePool = new Map<number, unknown>()
+  let nativeSeq = 0
+
   const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
-    async load_plugin_config(key: string, def?: unknown) {
-      return Object.prototype.hasOwnProperty.call(config, key) ? config[key] : (def ?? '')
-    },
+    async load_plugin_config(key: string, def?: unknown) { return readConfig(key, def) },
     async save_plugin_config(key: string, value: unknown) {
       config[key] = value
       options.onConfigSave?.(key, value)
       return null
     },
-    async 'runtime.is_task_group_cancelled'(key: string) {
-      return cancelledGroups.has(String(key))
+    async 'runtime.is_task_group_cancelled'(key: string) { return cancelledGroups.has(String(key)) },
+    async fetch(init: PluginRequestInit) { return options.request(init) },
+
+    // ---- 缓存 ----
+    async 'cache.get'(key: string, def?: unknown) {
+      const raw = cacheRead(cachePrefix + String(key))
+      if (raw == null) return def ?? ''
+      try { return JSON.parse(raw) } catch { return raw }
     },
-    async fetch(init: PluginRequestInit) {
-      return options.request(init)
+    async 'cache.set'(key: string, value: unknown) {
+      cacheWrite(cachePrefix + String(key), JSON.stringify(value ?? null))
+      return null
     },
+    async 'cache.delete'(key: string) { cacheRemove(cachePrefix + String(key)); return null },
+    async 'cache.clear'() { memoryCache.clear(); return null },
+
+    // ---- 宿主信息 / 提示 ----
+    async 'dart.getAppVersion'() { return '3.0.40' },
+    async 'flutter.showToast'(payload: unknown) {
+      let message = typeof payload === 'string' ? payload : ''
+      try {
+        const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (parsed && typeof parsed === 'object') {
+          const p = parsed as Record<string, unknown>
+          message = String(p.message ?? p.msg ?? p.text ?? message)
+        } else if (parsed != null) message = String(parsed)
+      } catch { /* 保留原字符串 */ }
+      if (message) options.onToast?.(message)
+      return null
+    },
+    async 'opencc.convert'(payload: unknown) {
+      // LightReadX 内置简繁转换, 这里原样回传不影响功能
+      const p = payload as Record<string, unknown> | string
+      return typeof p === 'string' ? p : String((p && (p as Record<string, unknown>).text) ?? '')
+    },
+
+    // ---- 字节池 / 数学 ----
+    async 'math.add'(a: unknown, b: unknown) { return Number(a) + Number(b) },
+    async 'native.put'(value: unknown) { const id = ++nativeSeq; nativePool.set(id, value); return id },
+    async 'native.take'(id: number) { return nativePool.get(Number(id)) ?? null },
+    async 'native.free'(id: number) { nativePool.delete(Number(id)); return null },
+    async 'native.exec'(...args: unknown[]) { return args },
+    async 'compression.gzip_compress'(input: unknown) { return input },
+    async 'compression.gzip_decompress'(input: unknown) { return input },
+
+    // ---- QuickJS 没有定时器, 插件常用 setTimeout 做退避/超时 ----
+    async 'timer.sleep'(ms: unknown) {
+      const delay = Math.max(0, Math.min(60_000, Number(ms) || 0))
+      await new Promise(resolve => setTimeout(resolve, delay))
+      return null
+    },
+  }
+
+  // ---- 加密路由 (旧版 bridge.call("crypto.*")) ----
+  for (const name of [
+    'crypto.md5_hex', 'crypto.sha1_hex', 'crypto.sha256_hex', 'crypto.sha512_hex',
+    'crypto.hmac_sha1_hex', 'crypto.hmac_sha256_hex', 'crypto.hmac_sha512_hex',
+    'crypto.aes_ecb_pkcs7_encrypt_b64', 'crypto.aes_ecb_pkcs7_decrypt_b64',
+    'crypto.aes_cbc_pkcs7_encrypt_b64', 'crypto.aes_cbc_pkcs7_decrypt_b64',
+    'crypto.aes_gcm_encrypt_b64', 'crypto.aes_gcm_decrypt_b64',
+  ]) {
+    handlers[name] = async (...args: unknown[]) => runCryptoBridge(name, args)
   }
 
   const finish = (id: number, ok: boolean, value: unknown) => {
@@ -178,9 +243,32 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   })
   expose('__hostHash', (algo: any, data: any, enc: any) => {
     try {
-      return ctx.newString(hashDigest(ctx.getString(algo), ctx.getString(data), ctx.getString(enc)))
+      return ctx.newString(digest(ctx.getString(algo), ctx.getString(data), ctx.getString(enc)))
     } catch {
       return ctx.newString('')
+    }
+  })
+  /** crypto 对象方法: 返回 JSON {type: 'text'|'bytes', value}, 由 prelude 转成字符串或 Uint8Array */
+  expose('__hostCrypto', (methodH: any, argsH: any) => {
+    try {
+      const args = JSON.parse(ctx.getString(argsH))
+      return ctx.newString(JSON.stringify(runCryptoMethod(ctx.getString(methodH), args)))
+    } catch (err) {
+      return ctx.newString(JSON.stringify({ type: 'text', value: '', error: String(err) }))
+    }
+  })
+  /** bridge.callSync 的同步路由, 只覆盖插件实际会用到的纯计算能力 */
+  expose('__hostSync', (nameH: any, argsH: any) => {
+    try {
+      const name = ctx.getString(nameH)
+      const args: unknown[] = JSON.parse(ctx.getString(argsH))
+      let value: unknown = null
+      if (name === 'math.add') value = Number(args[0]) + Number(args[1])
+      else if (name.startsWith('crypto.')) value = runCryptoBridge(name, args)
+      else if (name === 'compression.gzip_compress' || name === 'compression.gzip_decompress') value = args[0]
+      return ctx.newString(JSON.stringify({ ok: true, value }))
+    } catch (err) {
+      return ctx.newString(JSON.stringify({ ok: false, error: String(err) }))
     }
   })
   expose('__hostStart', (nameH: any, argsH: any) => {
@@ -244,9 +332,14 @@ globalThis.__done = false; globalThis.__result = null; globalThis.__error = null
     const errJson = evalStr('globalThis.__error', 'error')
     if (errJson && errJson !== 'null') {
       const detail = JSON.parse(errJson)
-      const error = new Error(detail.message || detail.raw || `插件调用失败: ${fnPath}`)
+      const error = new Error(detail.message || detail.raw || `插件调用失败: ${fnPath}`) as Error & { code?: string }
       error.name = detail.name || 'ComicPluginError'
       if (detail.stack) error.stack = detail.stack
+      const raw = [detail.raw, detail.message, detail.detail].map(v => String(v ?? '')).join(' ')
+      if (/["']?type["']?\s*:\s*["']unauthorized["']/i.test(raw)
+        || /UNAUTHORIZED|登录已失效|请先登录|未登录|登录过期/i.test(raw)) {
+        error.code = 'unauthorized'
+      }
       throw error
     }
     if (!done) throw new Error(`插件调用超时 (${fnPath}, ${timeoutMs}ms)`)
