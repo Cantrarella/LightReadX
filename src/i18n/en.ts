@@ -61,6 +61,7 @@ export default {
   'comics.packing': "Packing",
   'comics.cancel': "Cancel",
   'comics.downloadSuccess': "Downloaded to local comics",
+  'comics.downloadExists': "Already downloaded, no need to fetch it again",
   'comics.noPages': "This chapter has no images",
   'comics.closeReader': "Close",
   'comics.loadingChapter': "Loading chapter…",
@@ -95,6 +96,10 @@ export default {
   'downloads.remove': 'Remove',
   'downloads.open': 'Open',
   'downloads.clearAll': 'Clear finished',
+  'downloads.clearFailed': 'Clear failed',
+  'downloads.clearDone': 'Clear completed',
+  'downloads.fileMissing': 'File removed from library, you can download it again',
+  'downloads.redownload': 'Download again',
   'downloads.cleared': 'Download history cleared',
 
   // ---- Plugin store ----

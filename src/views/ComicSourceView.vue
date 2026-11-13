@@ -16,12 +16,15 @@ import { bytesToObjectUrl } from '../services/comicPlugin/download'
 import { cancel as cancelTask, enqueue, findTask, initDownloads } from '../services/comicPlugin/downloadCenter'
 import type { DetailChip, DetailMetaGroup } from '../services/comicPlugin/normalize'
 import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
+import { useLibrary } from '../stores/library'
+import { readerPath } from '../services/readerRoute'
 import type {
   ComicChapter, ComicPaging, ComicSearchItem, ComicInfo,
 } from '../services/comicPlugin/types'
 
 const route = useRoute()
 const router = useRouter()
+const library = useLibrary()
 const uuid = String(route.params.uuid ?? '')
 const plugin = getPlugin(uuid)
 /** 设置页「查看云端收藏」会带 ?tab=cloudFavorite 落到对应 tab */
@@ -247,15 +250,36 @@ function taskOf(chapter: ComicChapter) {
 }
 
 /** 下载统一交给全局下载中心: 进度不随页面销毁, 侧栏「下载」也能看到 */
-function download(chapter: ComicChapter) {
-  const task = enqueue({
+async function download(chapter: ComicChapter) {
+  const { task, skipped } = await enqueue({
     uuid,
     comicId: comicId.value,
     chapter,
     comicTitle: info.value?.title || comicId.value,
     cover: coverUrl(info.value?.cover),
   })
+  // 已入库的章节: 不重复下载, 提示里带「打开」直接读
+  if (skipped) {
+    toast(t('comics.downloadExists'), 'info', 4000, { label: t('downloads.open'), run: () => { void openDownloaded(chapter) } })
+    return
+  }
   if (task.status === 'done') toast(t('comics.downloadSuccess'), 'success')
+}
+
+/** 已入库的章节直接打开; 书被从藏书删了就提示, 让用户重新下载 */
+async function openDownloaded(chapter: ComicChapter) {
+  const task = taskOf(chapter)
+  if (!task?.bookId) return
+  if (!library.books.length) await library.refresh()
+  const book = library.books.find(b => b.id === task.bookId)
+  if (book) { void router.push(readerPath(book)); return }
+  toast(t('downloads.fileMissing'), 'error')
+}
+
+/** 章节行下载按钮: 已入库就直接读, 否则进下载队列 */
+function onChapterAction(chapter: ComicChapter) {
+  if (taskOf(chapter)?.status === 'done') { void openDownloaded(chapter); return }
+  void download(chapter)
 }
 
 function cancel(chapter: ComicChapter) {
@@ -266,7 +290,7 @@ function cancel(chapter: ComicChapter) {
 function downloadLabel(chapter: ComicChapter): string {
   const task = taskOf(chapter)
   if (!task) return t('comics.download')
-  if (task.status === 'done') return t('downloads.open') === '' ? t('comics.download') : t('downloads.groupDone')
+  if (task.status === 'done') return t('downloads.groupDone')
   if (task.status === 'failed' || task.status === 'interrupted') return t('downloads.retry')
   if (task.phase === 'images' && task.total) return `${task.loaded}/${task.total}`
   if (task.phase === 'packing' || task.phase === 'importing') return t('comics.packing')
@@ -404,7 +428,7 @@ function openReader(chapter: ComicChapter) {
           <button
             class="btn btn-primary"
             :disabled="taskOf(chapter)?.status === 'queued' || taskOf(chapter)?.status === 'running'"
-            @click="download(chapter)"
+            @click="onChapterAction(chapter)"
           >
             {{ downloadLabel(chapter) }}
           </button>

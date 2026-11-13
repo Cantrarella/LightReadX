@@ -7,8 +7,10 @@
  * 重启后未完成的任务标成「已中断」, 可以一键重下。
  */
 import { computed, reactive } from 'vue'
-import { cancelDownload, downloadChapterAsCbz, type DownloadPhase } from './download'
-import { chapterRequestId } from './normalize'
+import { cancelDownload, downloadChapterAsCbz, safeFileName, type DownloadPhase } from './download'
+import { chapterKey, chapterRequestId } from './normalize'
+import { getStorage } from '../../storage'
+import type { BookMeta } from '../../storage/types'
 import type { ComicChapter } from './types'
 
 export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted'
@@ -85,6 +87,29 @@ export function findTask(uuid: string, comicId: string, chapter: ComicChapter | 
   return downloadState.tasks.find(t => t.id === id)
 }
 
+/**
+ * 在藏书里找这一章已入库的书, 找到就说明不用再下。
+ * 主键是 description 里的完整章节 key; 旧版本下载只写了 `uuid · comicId` (没有章节),
+ * 所以再用文件名兜底一次, 老记录也能认出来。查库失败不阻断下载。
+ */
+export async function findDownloadedBook(
+  uuid: string,
+  comicId: string,
+  chapterId: string,
+  fileName?: string,
+): Promise<BookMeta | undefined> {
+  try {
+    const books = await (await getStorage()).listBooks()
+    const key = chapterKey(uuid, comicId, chapterId)
+    const byKey = books.find(b => b.description === key)
+    if (byKey) return byKey
+    if (!fileName) return undefined
+    return books.find(b => b.source === '漫画源下载' && b.fileName === fileName)
+  } catch {
+    return undefined
+  }
+}
+
 export const activeTasks = computed(() => downloadState.tasks.filter(t => t.status === 'queued' || t.status === 'running'))
 export const activeCount = computed(() => activeTasks.value.length)
 export const failedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'failed' || t.status === 'interrupted'))
@@ -98,46 +123,66 @@ function patch(id: string, changes: Partial<DownloadTask>) {
   persist()
 }
 
-/** 加入队列; 已存在则复用 (失败/中断的会重排) */
-export function enqueue(input: {
+/**
+ * 加入队列。已存在则复用 (失败/中断的会重排)。
+ *
+ * 先查藏书: 这一章已经入库就直接标 done 并指到已有的书 (skipped = true), 不重复下载。
+ * 任务表去重挡不住「清掉下载记录后再下」, 那会在藏书里多出一本同名书。
+ * 反过来, 记录标着 done 但书已被删掉时会重新下载, 相当于自愈。
+ */
+export async function enqueue(input: {
   uuid: string
   comicId: string
   chapter: ComicChapter
   comicTitle: string
   cover?: string
-}): DownloadTask {
+}): Promise<{ task: DownloadTask; skipped: boolean }> {
   initDownloads()
+  const chapterId = chapterRequestId(input.chapter)
   const id = taskId(input.uuid, input.comicId, input.chapter)
   const existing = downloadState.tasks.find(t => t.id === id)
-  if (existing) {
-    if (existing.status === 'queued' || existing.status === 'running' || existing.status === 'done') return existing
-    Object.assign(existing, {
-      status: 'queued' as TaskStatus, phase: 'chapter' as DownloadPhase,
-      loaded: 0, total: 0, error: undefined, updatedAt: Date.now(),
-    })
-    persist()
-    schedule()
-    return existing
+  if (existing && (existing.status === 'queued' || existing.status === 'running')) {
+    return { task: existing, skipped: false }
   }
-  const task: DownloadTask = {
+
+  const build = (): DownloadTask => ({
     id,
     uuid: input.uuid,
     comicId: input.comicId,
-    chapterId: chapterRequestId(input.chapter),
+    chapterId,
     comicTitle: input.comicTitle,
-    chapterName: input.chapter.name || chapterRequestId(input.chapter),
+    chapterName: input.chapter.name || chapterId,
     cover: input.cover,
     status: 'queued',
     phase: 'chapter',
     loaded: 0,
     total: 0,
-    createdAt: Date.now(),
+    createdAt: existing?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
+  })
+
+  const fileName = safeFileName(`${input.comicTitle} - ${input.chapter.name || chapterId}.cbz`)
+  const downloaded = await findDownloadedBook(input.uuid, input.comicId, chapterId, fileName)
+  if (downloaded) {
+    const task = existing ?? build()
+    Object.assign(task, {
+      status: 'done' as TaskStatus, phase: 'done' as DownloadPhase,
+      bookId: downloaded.id, error: undefined, updatedAt: Date.now(),
+    })
+    if (!existing) downloadState.tasks.unshift(task)
+    persist()
+    return { task, skipped: true }
   }
-  downloadState.tasks.unshift(task)
+
+  const task = existing ?? build()
+  Object.assign(task, {
+    status: 'queued' as TaskStatus, phase: 'chapter' as DownloadPhase,
+    loaded: 0, total: 0, error: undefined, bookId: undefined, updatedAt: Date.now(),
+  })
+  if (!existing) downloadState.tasks.unshift(task)
   persist()
   schedule()
-  return task
+  return { task, skipped: false }
 }
 
 function schedule() {
@@ -211,11 +256,16 @@ export function remove(id: string) {
   persist()
 }
 
-/** 清掉所有已结束 (完成 / 失败 / 取消 / 中断) 的记录 */
-export function clearFinished(only: 'failed' | 'all' = 'all') {
+/**
+ * 清掉已结束的记录, 进行中和排队的一律保留。
+ * only: 'failed' 只清失败/中断; 'done' 只清已完成; 'all' 全清 (含已取消)。
+ * 只动记录, 不动已入库的文件。
+ */
+export function clearFinished(only: 'failed' | 'done' | 'all' = 'all') {
   const keep = downloadState.tasks.filter(t => {
     if (t.status === 'running' || t.status === 'queued') return true
-    if (only === 'failed') return t.status === 'done'
+    if (only === 'failed') return t.status !== 'failed' && t.status !== 'interrupted'
+    if (only === 'done') return t.status !== 'done'
     return false
   })
   downloadState.tasks = keep

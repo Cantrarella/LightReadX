@@ -52,8 +52,13 @@ function openBook(task: DownloadTask) {
   void router.push('/library')
 }
 
-function clearAll() {
-  clearFinished('all')
+/** 记录标着已完成, 但书已经被用户从藏书删掉了 —— 这时给「重新下载」而不是「打开」 */
+function bookMissing(task: DownloadTask): boolean {
+  return task.status === 'done' && !library.books.some(b => b.id === task.bookId)
+}
+
+function clearOnly(only: 'failed' | 'done' | 'all') {
+  clearFinished(only)
   toast(t('downloads.cleared'), 'success')
 }
 
@@ -71,7 +76,9 @@ function retryAll() {
       </div>
       <div class="spacer" />
       <button v-if="failedList.length" class="btn" @click="retryAll">{{ t('downloads.retryAll') }}</button>
-      <button class="btn" :disabled="!totalCount" @click="clearAll">{{ t('downloads.clearAll') }}</button>
+      <button v-if="failedList.length" class="btn" @click="clearOnly('failed')">{{ t('downloads.clearFailed') }}</button>
+      <button v-if="doneList.length" class="btn" @click="clearOnly('done')">{{ t('downloads.clearDone') }}</button>
+      <button class="btn" :disabled="!totalCount" @click="clearOnly('all')">{{ t('downloads.clearAll') }}</button>
     </header>
 
     <p v-if="!totalCount" class="empty-title">{{ t('downloads.emptyTitle') }}</p>
@@ -115,10 +122,13 @@ function retryAll() {
         <div v-for="task in doneList" :key="task.id" class="task done">
           <div class="task-main">
             <div class="task-title">{{ task.comicTitle }}<span class="task-chapter">{{ task.chapterName }}</span></div>
-            <div class="task-reason">{{ t('downloads.doneLabel') }}</div>
+            <div class="task-reason" :class="{ missing: bookMissing(task) }">
+              {{ bookMissing(task) ? t('downloads.fileMissing') : t('downloads.doneLabel') }}
+            </div>
           </div>
           <div class="task-actions">
-            <button class="btn" @click="openBook(task)">{{ t('downloads.open') }}</button>
+            <button v-if="bookMissing(task)" class="btn btn-primary" @click="retry(task.id)">{{ t('downloads.redownload') }}</button>
+            <button v-else class="btn" @click="openBook(task)">{{ t('downloads.open') }}</button>
             <button class="btn btn-ghost" @click="remove(task.id)">{{ t('downloads.remove') }}</button>
           </div>
         </div>
@@ -172,6 +182,7 @@ function retryAll() {
 .task-chapter { font-weight: 400; color: var(--text-3); font-size: 13px; margin-left: 10px; }
 .task-reason { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
 .task.failed .task-reason { color: var(--danger, #d9534f); }
+.task-reason.missing { color: var(--danger, #d9534f); }
 .task-status { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
 .task-actions { display: flex; gap: 8px; flex: none; }
 .task-actions .btn { padding: 0 12px; font-size: 13px; }

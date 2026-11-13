@@ -153,6 +153,15 @@ export function chapterRequestId(chapter: ComicChapter): string {
   return chapter.requestId ?? chapter.storageChapterId ?? chapter.id
 }
 
+/**
+ * 章节在藏书里的唯一键, 下载入库时写进 BookMeta.description。
+ * 用来识别「这一章已经下过了」——只靠任务表去重不够, 用户清掉下载记录后照样会再入一本。
+ * 放在 normalize (不依赖 download / downloadCenter), 避免两边互相 import 成环。
+ */
+export function chapterKey(uuid: string, comicId: string, chapterId: string): string {
+  return `${uuid} · ${comicId} · ${chapterId}`
+}
+
 /** 搜索结果封面 URL (Breeze 的 cover 是对象, 个别插件直接给字符串) */
 export function coverUrl(cover: unknown): string {
   if (typeof cover === 'string') return cover

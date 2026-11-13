@@ -7,7 +7,7 @@
 import { zipSync } from 'fflate'
 import { importFile } from '../importer'
 import { openPlugin, downloadConcurrency } from './index'
-import { chapterRequestId, normalizeChapter, pageFileName } from './normalize'
+import { chapterKey, chapterRequestId, normalizeChapter, pageFileName } from './normalize'
 import type { ComicChapter, ComicChapterResult } from './types'
 
 export type DownloadPhase = 'chapter' | 'images' | 'packing' | 'importing' | 'done' | 'cancelled' | 'error'
@@ -42,7 +42,8 @@ export function isDownloadCancelled(key: string): boolean {
   return activeGroups.get(key)?.has(key) ?? false
 }
 
-function safeFileName(name: string): string {
+/** 导出给下载中心: 查重时要算出同一个文件名做兜底匹配 */
+export function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'comic.cbz'
 }
 
@@ -185,7 +186,7 @@ export async function downloadChapterAsCbz(
     const result = await importFile(file, '漫画源下载', {
       title: `${title} - ${chapterName}`,
       author: '',
-      description: `${uuid} · ${comicId}`,
+      description: chapterKey(uuid, comicId, chapterRequestId(target)),
     })
     if (!result.ok) throw new Error(result.error ?? '入库失败')
 

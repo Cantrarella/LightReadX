@@ -61,6 +61,7 @@ export default {
   'comics.packing': "打包中",
   'comics.cancel': "取消",
   'comics.downloadSuccess': "已下载到「漫画-本地」",
+  'comics.downloadExists': "这一章已经下载过了，无需重复下载",
   'comics.noPages': "这一话没有图片",
   'comics.closeReader': "关闭",
   'comics.loadingChapter': "正在加载章节…",
@@ -95,6 +96,10 @@ export default {
   'downloads.remove': '移除',
   'downloads.open': '打开',
   'downloads.clearAll': '清理已结束',
+  'downloads.clearFailed': '清失败记录',
+  'downloads.clearDone': '清完成记录',
+  'downloads.fileMissing': '文件已从藏书删除，可重新下载',
+  'downloads.redownload': '重新下载',
   'downloads.cleared': '已清理下载记录',
 
   // ---- 插件商店 ----
