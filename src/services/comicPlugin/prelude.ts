@@ -239,7 +239,12 @@ URLSearchParams.prototype[Symbol.iterator] = function () { return this._items[Sy
 // fetch 响应的 headers 补 forEach / has
 var __origFetch = globalThis.fetch;
 globalThis.fetch = async function (url, init) {
-  const r = await __origFetch(url, init);
+  // 插件常写 new Headers(...) 再传进来, 宿主只认普通对象
+  var opts = init;
+  if (opts && opts.headers && typeof opts.headers.toJSON === 'function') {
+    opts = Object.assign({}, opts, { headers: opts.headers.toJSON() });
+  }
+  const r = await __origFetch(url, opts);
   r.headers.forEach = function (fn) { Object.keys(r.headers.raw || {}).forEach(function (k) { fn(r.headers.raw[k], k); }); };
   r.headers.has = function (k) { return (r.headers.raw || {})[String(k).toLowerCase()] != null; };
   r.blob = async function () { return { arrayBuffer: async () => (await r.arrayBuffer()), type: r.headers.get('content-type') || '' }; };
@@ -276,4 +281,380 @@ globalThis.path = {
   basename: function (p) { var parts = String(p).split('/'); return parts[parts.length - 1] || ''; },
   dirname: function (p) { var parts = String(p).split('/'); parts.pop(); return parts.join('/') || '.'; },
 };
+
+// ---- process / Headers: 部分插件在模块顶层就读 process.env, 缺了会直接加载失败 ----
+if (typeof globalThis.process === 'undefined') {
+  globalThis.process = {
+    env: {}, argv: [], platform: 'breeze', version: '20.0.0', browser: true,
+    cwd: function () { return '/'; },
+    nextTick: function (fn) { Promise.resolve().then(fn); },
+    on: function () {}, off: function () {}, once: function () {},
+    removeListener: function () {}, emit: function () {}, exit: function () {},
+  };
+}
+if (typeof globalThis.Headers === 'undefined') {
+  globalThis.Headers = function (init) {
+    var map = {};
+    var put = function (k, v) { map[String(k).toLowerCase()] = String(v); };
+    if (init) {
+      if (Array.isArray(init)) { init.forEach(function (p) { put(p[0], p[1]); }); }
+      else if (typeof init.forEach === 'function' && typeof init.get === 'function') { init.forEach(function (v, k) { put(k, v); }); }
+      else { Object.keys(init).forEach(function (k) { put(k, init[k]); }); }
+    }
+    var h = {
+      get: function (k) { var v = map[String(k).toLowerCase()]; return v === undefined ? null : v; },
+      set: function (k, v) { put(k, v); },
+      append: function (k, v) { var kk = String(k).toLowerCase(); map[kk] = map[kk] ? map[kk] + ', ' + v : String(v); },
+      has: function (k) { return map[String(k).toLowerCase()] !== undefined; },
+      'delete': function (k) { delete map[String(k).toLowerCase()]; },
+      forEach: function (fn) { Object.keys(map).forEach(function (k) { fn(map[k], k); }); },
+      entries: function () { return Object.keys(map).map(function (k) { return [k, map[k]]; })[Symbol.iterator](); },
+      keys: function () { return Object.keys(map)[Symbol.iterator](); },
+      values: function () { return Object.keys(map).map(function (k) { return map[k]; })[Symbol.iterator](); },
+      // 宿主 fetch 只认普通对象, 靠 toJSON 把 Headers 摊平成字典
+      toJSON: function () { var o = {}; Object.keys(map).forEach(function (k) { o[k] = map[k]; }); return o; },
+    };
+    h[Symbol.iterator] = h.entries;
+    return h;
+  };
+}
+
+// ---- BreezeHtml: Breeze 提供给插件的 HTML 解析器 (cheerio 风格) ----
+// 官方实现在 Dart 侧, 这里用纯 JS 复刻够用的子集: load(html) 返回 $,
+// 支持 tag / .class / #id / [attr=value] 与后代、子元素组合, 以及
+// toArray / attr / text / find / first / each / eq / parent / children。
+if (typeof globalThis.BreezeHtml === 'undefined') {
+  var __hVoid = { area: 1, base: 1, br: 1, col: 1, embed: 1, hr: 1, img: 1, input: 1, link: 1, meta: 1, param: 1, source: 1, track: 1, wbr: 1 };
+  var __hRaw = { script: 1, style: 1, textarea: 1 };
+
+  var __hDecode = function (s) {
+    if (s.indexOf('&') < 0) return s;
+    return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, function (m, body) {
+      if (body.charAt(0) === '#') {
+        var code = (body.charAt(1) === 'x' || body.charAt(1) === 'X')
+          ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+        return isNaN(code) ? m : String.fromCharCode(code);
+      }
+      var table = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+      var v = table[body.toLowerCase()];
+      return v === undefined ? m : v;
+    });
+  };
+
+  var __hAttrs = function (raw) {
+    var attrs = {};
+    var re = /([^\\s=\\/]+)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+)))?/g;
+    var m;
+    while ((m = re.exec(raw))) {
+      var k = m[1].toLowerCase();
+      attrs[k] = __hDecode(m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : (m[4] !== undefined ? m[4] : '')));
+    }
+    return attrs;
+  };
+
+  var __hFindEnd = function (html, from) {
+    var quote = '';
+    for (var k = from; k < html.length; k++) {
+      var c = html.charAt(k);
+      if (quote) { if (c === quote) quote = ''; continue; }
+      if (c === '"' || c === "'") { quote = c; continue; }
+      if (c === '>') return k;
+    }
+    return -1;
+  };
+
+  var __hParse = function (html) {
+    var root = { tag: '#root', attrs: {}, children: [], parent: null, text: '' };
+    var stack = [root];
+    var lower = null;
+    var i = 0, n = html.length;
+    var pushText = function (t) {
+      if (!t) return;
+      stack[stack.length - 1].text += __hDecode(t);
+    };
+    while (i < n) {
+      var lt = html.indexOf('<', i);
+      if (lt < 0) { pushText(html.slice(i)); break; }
+      if (lt > i) pushText(html.slice(i, lt));
+      if (html.substr(lt, 4) === '<!--') {
+        var cEnd = html.indexOf('-->', lt + 4);
+        i = cEnd < 0 ? n : cEnd + 3;
+        continue;
+      }
+      var nb = html.charAt(lt + 1);
+      if (nb === '!' || nb === '?') {
+        var dEnd = html.indexOf('>', lt);
+        i = dEnd < 0 ? n : dEnd + 1;
+        continue;
+      }
+      var gt = __hFindEnd(html, lt + 1);
+      if (gt < 0) { pushText(html.slice(lt)); break; }
+      var inner = html.slice(lt + 1, gt);
+      if (inner.charAt(0) === '/') {
+        var closeName = inner.slice(1).trim().toLowerCase();
+        for (var s = stack.length - 1; s > 0; s--) {
+          if (stack[s].tag === closeName) { stack.length = s; break; }
+        }
+        i = gt + 1;
+        continue;
+      }
+      var mm = /^([a-zA-Z][\\w:.-]*)/.exec(inner);
+      if (!mm) { i = gt + 1; continue; }
+      var tag = mm[1].toLowerCase();
+      var el = {
+        tag: tag,
+        attrs: __hAttrs(inner.slice(mm[1].length)),
+        children: [], parent: stack[stack.length - 1], text: '',
+      };
+      el.parent.children.push(el);
+      i = gt + 1;
+      if (__hVoid[tag]) continue;
+      if (__hRaw[tag]) {
+        if (lower === null) lower = html.toLowerCase();
+        var closeAt = lower.indexOf('</' + tag, i);
+        el.text = __hDecode(closeAt < 0 ? html.slice(i) : html.slice(i, closeAt));
+        if (closeAt < 0) { i = n; } else {
+          var ce = html.indexOf('>', closeAt);
+          i = ce < 0 ? n : ce + 1;
+        }
+        continue;
+      }
+      if (/\\/\\s*$/.test(inner)) continue;
+      stack.push(el);
+    }
+    return root;
+  };
+
+  var __hCompound = function (tok) {
+    var part = { tag: '', id: '', classes: [], attrs: [] };
+    var i = 0;
+    while (i < tok.length) {
+      var c = tok.charAt(i);
+      if (c === '*') { i++; continue; }
+      if (c === '[') {
+        var end = tok.indexOf(']', i);
+        if (end < 0) break;
+        var body = tok.slice(i + 1, end);
+        var eq = body.indexOf('=');
+        if (eq < 0) {
+          part.attrs.push([body.trim().toLowerCase(), null]);
+        } else {
+          var key = body.slice(0, eq).trim().toLowerCase();
+          var val = body.slice(eq + 1).trim();
+          var q = val.charAt(0);
+          if ((q === '"' || q === "'") && val.charAt(val.length - 1) === q) val = val.slice(1, -1);
+          part.attrs.push([key, val]);
+        }
+        i = end + 1;
+        continue;
+      }
+      var m = /^([.#]?)([\\w:\\-]+)/.exec(tok.slice(i));
+      if (!m) { i++; continue; }
+      if (m[1] === '.') part.classes.push(m[2]);
+      else if (m[1] === '#') part.id = m[2];
+      else if (!part.tag) part.tag = m[2].toLowerCase();
+      i += m[0].length;
+    }
+    return part;
+  };
+
+  var __hMatch = function (el, part) {
+    if (el.tag === '#root') return false;
+    if (part.tag && el.tag !== part.tag) return false;
+    if (part.id && el.attrs.id !== part.id) return false;
+    var i;
+    if (part.classes.length) {
+      var cls = ' ' + (el.attrs['class'] || '') + ' ';
+      for (i = 0; i < part.classes.length; i++) {
+        if (cls.indexOf(' ' + part.classes[i] + ' ') < 0) return false;
+      }
+    }
+    for (i = 0; i < part.attrs.length; i++) {
+      var k = part.attrs[i][0], v = part.attrs[i][1];
+      if (el.attrs[k] === undefined) return false;
+      if (v !== null && el.attrs[k] !== v) return false;
+    }
+    return true;
+  };
+
+  var __hDescendants = function (el, out) {
+    for (var i = 0; i < el.children.length; i++) {
+      out.push(el.children[i]);
+      __hDescendants(el.children[i], out);
+    }
+    return out;
+  };
+
+  var __hSteps = function (sel) {
+    var groups = String(sel).split(',');
+    var all = [];
+    for (var g = 0; g < groups.length; g++) {
+      var tokens = groups[g].trim().replace(/\\s*>\\s*/g, ' > ').split(/\\s+/).filter(Boolean);
+      var steps = [], comb = ' ';
+      for (var t = 0; t < tokens.length; t++) {
+        if (tokens[t] === '>') { comb = '>'; continue; }
+        if (tokens[t] === '+' || tokens[t] === '~') { comb = tokens[t]; continue; }
+        steps.push({ comb: steps.length ? comb : '', part: __hCompound(tokens[t]) });
+        comb = ' ';
+      }
+      if (steps.length) all.push(steps);
+    }
+    return all;
+  };
+
+  var __hQuery = function (root, sel) {
+    var groups = __hSteps(sel);
+    var out = [];
+    for (var g = 0; g < groups.length; g++) {
+      var steps = groups[g];
+      var current = [root];
+      for (var s = 0; s < steps.length; s++) {
+        var step = steps[s];
+        var next = [];
+        for (var c = 0; c < current.length; c++) {
+          var scope = current[c];
+          var pool = step.comb === '>' ? scope.children : __hDescendants(scope, []);
+          for (var p = 0; p < pool.length; p++) {
+            if (__hMatch(pool[p], step.part) && next.indexOf(pool[p]) < 0) next.push(pool[p]);
+          }
+        }
+        current = next;
+        if (!current.length) break;
+      }
+      for (var q = 0; q < current.length; q++) {
+        if (current[q] !== root && out.indexOf(current[q]) < 0) out.push(current[q]);
+      }
+    }
+    return out;
+  };
+
+  var __hText = function (el) {
+    var s = el.text || '';
+    for (var i = 0; i < el.children.length; i++) s += __hText(el.children[i]);
+    return s;
+  };
+
+  var __hOuter = function (el) {
+    var s = '<' + el.tag;
+    for (var k in el.attrs) {
+      s += ' ' + k + '="' + String(el.attrs[k]).replace(/"/g, '&quot;') + '"';
+    }
+    s += '>' + __hText(el) + '</' + el.tag + '>';
+    return s;
+  };
+
+  var __hWrap = function (nodes) {
+    var api = {
+      length: nodes.length,
+      toArray: function () { return nodes.slice(); },
+      get: function (i) { return i === undefined ? nodes.slice() : nodes[i < 0 ? nodes.length + i : i]; },
+      eq: function (i) { return __hWrap(nodes.slice(i < 0 ? nodes.length + i : i, (i < 0 ? nodes.length + i : i) + 1)); },
+      first: function () { return __hWrap(nodes.slice(0, 1)); },
+      last: function () { return __hWrap(nodes.slice(-1)); },
+      each: function (fn) {
+        for (var i = 0; i < nodes.length; i++) fn.call(nodes[i], i, nodes[i]);
+        return api;
+      },
+      forEach: function (fn) { return api.each(fn); },
+      map: function (fn) {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+          var v = fn.call(nodes[i], i, nodes[i]);
+          if (v !== null && v !== undefined) out.push(v);
+        }
+        return __hWrap(out);
+      },
+      filter: function (fn) {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) if (fn.call(nodes[i], i, nodes[i])) out.push(nodes[i]);
+        return __hWrap(out);
+      },
+      find: function (sel) {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+          var hits = __hQuery(nodes[i], sel);
+          for (var h = 0; h < hits.length; h++) if (out.indexOf(hits[h]) < 0) out.push(hits[h]);
+        }
+        return __hWrap(out);
+      },
+      children: function () {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) out = out.concat(nodes[i].children);
+        return __hWrap(out);
+      },
+      parent: function () {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+          var p = nodes[i].parent;
+          if (p && p.tag !== '#root' && out.indexOf(p) < 0) out.push(p);
+        }
+        return __hWrap(out);
+      },
+      next: function () {
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+          var p = nodes[i].parent;
+          if (!p) continue;
+          var nxt = p.children[p.children.indexOf(nodes[i]) + 1];
+          if (nxt) out.push(nxt);
+        }
+        return __hWrap(out);
+      },
+      attr: function (k, v) {
+        var key = String(k).toLowerCase();
+        if (v === undefined) return nodes.length ? nodes[0].attrs[key] : undefined;
+        for (var i = 0; i < nodes.length; i++) nodes[i].attrs[key] = String(v);
+        return api;
+      },
+      removeAttr: function (k) {
+        for (var i = 0; i < nodes.length; i++) delete nodes[i].attrs[String(k).toLowerCase()];
+        return api;
+      },
+      text: function (v) {
+        if (v === undefined) {
+          var s = '';
+          for (var i = 0; i < nodes.length; i++) s += __hText(nodes[i]);
+          return s;
+        }
+        for (var j = 0; j < nodes.length; j++) { nodes[j].children = []; nodes[j].text = String(v); }
+        return api;
+      },
+      html: function (v) {
+        if (v === undefined) return nodes.length ? __hText(nodes[0]) : '';
+        for (var i = 0; i < nodes.length; i++) { nodes[i].children = []; nodes[i].text = String(v); }
+        return api;
+      },
+      outerHtml: function () { return nodes.length ? __hOuter(nodes[0]) : ''; },
+      hasClass: function (c) {
+        for (var i = 0; i < nodes.length; i++) {
+          if ((' ' + (nodes[i].attrs['class'] || '') + ' ').indexOf(' ' + c + ' ') >= 0) return true;
+        }
+        return false;
+      },
+      val: function () { return nodes.length ? (nodes[0].attrs.value || '') : ''; },
+      is: function (sel) {
+        for (var i = 0; i < nodes.length; i++) {
+          if (__hMatch(nodes[i], __hCompound(String(sel)))) return true;
+        }
+        return false;
+      },
+    };
+    return api;
+  };
+
+  globalThis.BreezeHtml = {
+    load: function (html) {
+      var root = __hParse(String(html == null ? '' : html));
+      var $ = function (sel) {
+        if (sel && typeof sel === 'object') return __hWrap([sel]);
+        if (typeof sel === 'string') return __hWrap(__hQuery(root, sel));
+        return __hWrap([]);
+      };
+      $.root = root;
+      $.html = function () { return __hText(root); };
+      $.find = function (sel) { return __hWrap(__hQuery(root, sel)); };
+      return $;
+    },
+  };
+}
 `;

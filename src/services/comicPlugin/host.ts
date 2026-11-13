@@ -103,6 +103,8 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   const cancelledGroups = options.cancelledGroups ?? new Set<string>()
   const pending = new Map<number, Promise<unknown>>()
   let seq = 0
+  /** call() 的槽位号, 保证并发调用各有独立结果格 */
+  let callSeq = 0
   let disposed = false
 
   // 插件缓存 (域名端点 / 响应等)。桌面与网页都落到 localStorage, 测试环境退化为内存。
@@ -301,51 +303,64 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   async function call<T = unknown>(fnPath: string, payload?: unknown, opts: CallOptions = {}): Promise<T> {
     if (disposed) throw new Error('插件宿主已释放')
     const mapResult = opts.mapResult ?? 'JSON.stringify(r === undefined ? null : r)'
+    // 每次调用独立的槽位: 同一宿主上并发调用 (例如 4 路并发拉封面) 不会互相覆盖结果,
+    // 否则先完成的调用会被后开始的调用重置成「未完成」, 表现为重复同样的等待甚至一直等到超时
+    const callId = ++callSeq
+    const slot = `globalThis.__calls[${callId}]`
     unwrap(ctx.evalCode(`
-globalThis.__done = false; globalThis.__result = null; globalThis.__error = null;
-(async () => {
-  try {
-    const fn = ${fnAccess(fnPath)};
-    if (typeof fn !== 'function') throw new Error('插件未提供 fnPath: ${fnPath}');
-    const r = await fn(${JSON.stringify(payload ?? {})});
-    globalThis.__result = ${mapResult};
-  } catch (e) {
-    let detail;
-    try { detail = JSON.stringify(e) } catch { detail = '' }
-    globalThis.__error = JSON.stringify({
-      message: e && e.message, name: e && e.name, stack: e && e.stack,
-      raw: String(e), detail,
-    });
-  }
-  globalThis.__done = true;
+globalThis.__calls = globalThis.__calls || {};
+(() => {
+  const slot = { done: false, result: null, error: null };
+  globalThis.__calls[${callId}] = slot;
+  (async () => {
+    try {
+      const fn = ${fnAccess(fnPath)};
+      if (typeof fn !== 'function') throw new Error('插件未提供 fnPath: ${fnPath}');
+      const r = await fn(${JSON.stringify(payload ?? {})});
+      slot.result = ${mapResult};
+    } catch (e) {
+      let detail;
+      try { detail = JSON.stringify(e) } catch { detail = '' }
+      slot.error = JSON.stringify({
+        message: e && e.message, name: e && e.name, stack: e && e.stack,
+        raw: String(e), detail,
+      });
+    } finally {
+      slot.done = true;
+    }
+  })();
 })();
 `, 'call'), 'call').dispose()
 
     const timeoutMs = opts.timeoutMs ?? 60_000
     const deadline = Date.now() + timeoutMs
     let done = false
-    while (Date.now() < deadline) {
-      runtime.executePendingJobs()
-      if (evalStr('String(globalThis.__done)', 'done') === 'true') { done = true; break }
-      await new Promise(resolve => setTimeout(resolve, 3))
-    }
-    const errJson = evalStr('globalThis.__error', 'error')
-    if (errJson && errJson !== 'null') {
-      const detail = JSON.parse(errJson)
-      const error = new Error(detail.message || detail.raw || `插件调用失败: ${fnPath}`) as Error & { code?: string }
-      error.name = detail.name || 'ComicPluginError'
-      if (detail.stack) error.stack = detail.stack
-      const raw = [detail.raw, detail.message, detail.detail].map(v => String(v ?? '')).join(' ')
-      if (/["']?type["']?\s*:\s*["']unauthorized["']/i.test(raw)
-        || /UNAUTHORIZED|登录已失效|请先登录|未登录|登录过期/i.test(raw)) {
-        error.code = 'unauthorized'
+    try {
+      while (Date.now() < deadline) {
+        runtime.executePendingJobs()
+        if (evalStr(`String(${slot}.done)`, 'done') === 'true') { done = true; break }
+        await new Promise(resolve => setTimeout(resolve, 3))
       }
-      throw error
+      const errJson = evalStr(`${slot}.error`, 'error')
+      if (errJson && errJson !== 'null') {
+        const detail = JSON.parse(errJson)
+        const error = new Error(detail.message || detail.raw || `插件调用失败: ${fnPath}`) as Error & { code?: string }
+        error.name = detail.name || 'ComicPluginError'
+        if (detail.stack) error.stack = detail.stack
+        const raw = [detail.raw, detail.message, detail.detail].map(v => String(v ?? '')).join(' ')
+        if (/["']?type["']?\s*:\s*["']unauthorized["']/i.test(raw)
+          || /UNAUTHORIZED|登录已失效|请先登录|未登录|登录过期/i.test(raw)) {
+          error.code = 'unauthorized'
+        }
+        throw error
+      }
+      if (!done) throw new Error(`插件调用超时 (${fnPath}, ${timeoutMs}ms)`)
+      const out = evalStr(`${slot}.result`, 'result')
+      if (out == null || out === 'null') return null as T
+      return (opts.binary ? base64ToBytes(out) : JSON.parse(out)) as T
+    } finally {
+      try { unwrap(ctx.evalCode(`delete globalThis.__calls[${callId}]`, 'cleanup'), 'cleanup').dispose() } catch { /* 忽略 */ }
     }
-    if (!done) throw new Error(`插件调用超时 (${fnPath}, ${timeoutMs}ms)`)
-    const out = evalStr('globalThis.__result', 'result')
-    if (out == null || out === 'null') return null as T
-    return (opts.binary ? base64ToBytes(out) : JSON.parse(out)) as T
   }
 
   return {

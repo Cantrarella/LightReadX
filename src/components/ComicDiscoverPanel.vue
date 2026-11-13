@@ -97,9 +97,13 @@ const heading = computed(() => {
 })
 
 /** 封面也走插件 fetchImageBytes (带防盗链头), 一个长驻宿主并发拉取 */
+/** 一次最多补多少张封面: 列表动辄 40 条, 全量拉会把插件宿主占满, 界面像卡死 */
+const COVER_LIMIT = 40
+const COVER_WORKERS = 3
+
 async function loadCovers(items: Array<{ id: string; cover: string }>) {
   const seq = ++coverSeq
-  const queue = items.filter(i => i.cover && i.id && !covers[i.id])
+  const queue = items.filter(i => i.cover && i.id && !covers[i.id]).slice(0, COVER_LIMIT)
   if (!queue.length) return
   if (!coverHost) coverHost = await openPlugin(uuid)
   const host = coverHost
@@ -109,12 +113,12 @@ async function loadCovers(items: Array<{ id: string; cover: string }>) {
     while (seq === coverSeq && cursor < queue.length) {
       const item = queue[cursor++]
       try {
-        const bytes = await host.callBytes('fetchImageBytes', { url: item.cover }, { timeoutMs: 30_000 })
+        const bytes = await host.callBytes('fetchImageBytes', { url: item.cover }, { timeoutMs: 20_000 })
         if (seq === coverSeq && bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, item.cover)
       } catch { /* 单张失败用占位图 */ }
     }
   }
-  await Promise.all(Array.from({ length: 4 }, () => worker()))
+  await Promise.all(Array.from({ length: COVER_WORKERS }, () => worker()))
 }
 
 function coverKey(item: DiscoverItem): string {

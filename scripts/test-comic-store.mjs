@@ -84,6 +84,24 @@ assert.equal(store.compareVersion('2.0.0-beta', '2.0.0'), -1)
 const cand = store.bundleCandidates(parsed[0])
 assert.ok(cand[0] === 'https://cdn.jsdelivr.net/npm/breeze-plugin-webtoon@0.1.0/dist/breeze-plugin-webtoon.bundle.cjs')
 assert.ok(cand.includes('https://cdn.jsdelivr.net/npm/breeze-plugin-webtoon/dist/breeze-plugin-webtoon.bundle.cjs'))
+
+// 没有 npmName 的条目只能靠仓库路径; 仓库里文件名是小写, 两种大小写都要出候选
+// (之前只猜 Breeze-plugin-mangadex.bundle.cjs → 全部 404, 商店里 8 个插件装不上)
+const repoOnly = store.parseStoreIndex(
+  [{ repo: 'k623615746/Breeze-plugin-mangadex', manifest: { name: 'MangaDex', version: '1.3.1' } }],
+  sub,
+)[0]
+const repoCand = store.bundleCandidates(repoOnly)
+assert.ok(
+  repoCand.includes('https://cdn.jsdelivr.net/gh/k623615746/Breeze-plugin-mangadex@main/dist/breeze-plugin-mangadex.bundle.cjs'),
+  '仓库里的小写文件名要能命中',
+)
+assert.ok(
+  repoCand.includes('https://cdn.jsdelivr.net/gh/k623615746/Breeze-plugin-mangadex@main/dist/Breeze-plugin-mangadex.bundle.cjs'),
+  '大写写法保留作兜底',
+)
+assert.equal(typeof store.repoBundleCandidates, 'function', 'jsDelivr 文件清单兜底')
+assert.equal(typeof store.releaseBundleCandidates, 'function', 'Release 资源兜底')
 assert.ok(cand.some(u => u.startsWith('https://cdn.jsdelivr.net/gh/deretame/Breeze-plugin-webtoon@main/dist/')))
 assert.ok(cand.some(u => u.startsWith('https://raw.githubusercontent.com/deretame/Breeze-plugin-webtoon/main/dist/')))
 assert.equal(new Set(cand).size, cand.length, '候选不能重复')
@@ -254,5 +272,5 @@ const nested = discover.mergeFilterResult([
 ])
 assert.deepEqual(nested, { core: {}, extern: { type: 'doujin_chinese' } }, '子选项应覆盖父选项的同名参数')
 
-console.log('test-comic-store: OK (index / version / bundle / links / cache / state / scheme / tabs / scene.list / cloudFavorite / filter)')
+console.log('test-comic-store: OK (index / version / bundle候选大小写 / 清单与Release兜底 / links / cache / state / scheme / tabs / scene.list / cloudFavorite / filter)')
 fs.rmSync(tmp, { recursive: true, force: true })

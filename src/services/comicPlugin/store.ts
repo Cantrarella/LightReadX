@@ -355,22 +355,47 @@ export function bundleCandidates(entry: StoreEntry): string[] {
   const urls: string[] = []
   const push = (url: string) => { if (url && !urls.includes(url)) urls.push(url) }
   const name = entry.npmName
-  const file = name ? `${name}.bundle.cjs` : ''
   if (name) {
+    const file = `${name}.bundle.cjs`
     if (entry.version) push(`https://cdn.jsdelivr.net/npm/${name}@${entry.version}/dist/${file}`)
     push(`https://cdn.jsdelivr.net/npm/${name}/dist/${file}`)
   }
   if (entry.repo && /^[\w.-]+\/[\w.-]+$/.test(entry.repo)) {
     const base = `https://cdn.jsdelivr.net/gh/${entry.repo}@main/dist`
     const raw = `https://raw.githubusercontent.com/${entry.repo}/main/dist`
-    const guess = entry.repo.split('/')[1]
+    // 仓库里的文件名大小写不固定 (Breeze-plugin-x 仓库里往往是 breeze-plugin-x.bundle.cjs),
+    // 两种写法都试一遍; 实在没有再用 jsDelivr 文件清单兜底
+    const stems = [entry.repo.split('/')[1], name]
+      .filter((v): v is string => !!v)
+      .flatMap(stem => [stem, stem.toLowerCase()])
     for (const prefix of [base, raw]) {
-      for (const filename of [`${guess}.bundle.cjs`, `${name || guess}.bundle.cjs`, 'index.cjs', 'plugin.bundle.cjs']) {
-        push(`${prefix}/${filename}`)
-      }
+      for (const stem of stems) push(`${prefix}/${stem}.bundle.cjs`)
+      push(`${prefix}/index.cjs`)
+      push(`${prefix}/plugin.bundle.cjs`)
     }
   }
   return urls
+}
+
+/** 用 jsDelivr 的文件清单接口问出仓库里真实的 bundle 路径, 不猜文件名 */
+export async function repoBundleCandidates(repo: string): Promise<string[]> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return []
+  try {
+    const text = await readRemoteText(
+      `https://data.jsdelivr.com/v1/packages/gh/${repo}@main?structure=flat`,
+      'application/json',
+      BUNDLE_FETCH_TIMEOUT,
+    )
+    const parsed = JSON.parse(text) as { files?: Array<{ name?: string }> }
+    const files = (parsed.files ?? []).map(f => String(f.name ?? ''))
+    return files
+      .filter(name => /\.bundle\.cjs$/i.test(name))
+      .sort((a, b) => a.length - b.length)
+      .slice(0, 4)
+      .map(name => `https://cdn.jsdelivr.net/gh/${repo}@main${name.startsWith('/') ? name : `/${name}`}`)
+  } catch {
+    return []
+  }
 }
 
 /** 从 updateUrl (Release API / latest.json) 里挖出可下载的 bundle 链接 */
@@ -420,24 +445,76 @@ export interface StoreInstallResult {
   url: string
 }
 
+/** 有些仓库不提交构建产物, 只发 Release; 从 release 页面抓资源名, 绕开 GitHub API 限流 */
+export async function releaseBundleCandidates(repo: string): Promise<string[]> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return []
+  try {
+    const latest = await readRemoteText(
+      `https://github.com/${repo}/releases/latest`,
+      'text/html, */*',
+      BUNDLE_FETCH_TIMEOUT,
+    )
+    const tagHit = /\/releases\/tag\/([^"'\s>]+)/.exec(latest)
+    if (!tagHit) return []
+    const tag = decodeURIComponent(tagHit[1])
+    const assets = await readRemoteText(
+      `https://github.com/${repo}/releases/expanded_assets/${encodeURIComponent(tag)}`,
+      'text/html, */*',
+      BUNDLE_FETCH_TIMEOUT,
+    )
+    const out: string[] = []
+    const re = /href="([^"]+\.(?:cjs|mjs|js))"/gi
+    let hit: RegExpExecArray | null
+    while ((hit = re.exec(assets))) {
+      const href = hit[1]
+      const url = href.startsWith('http')
+        ? href
+        : `https://github.com${href.startsWith('/') ? '' : '/'}${href}`
+      if (!out.includes(url)) out.push(url)
+    }
+    return out.slice(0, 6)
+  } catch {
+    return []
+  }
+}
+
 /** 依次尝试候选地址, 拿到源码后复用统一安装流程 (getInfo 校验 + uuid 去重) */
 export async function installStoreEntry(entry: StoreEntry): Promise<StoreInstallResult> {
-  const urls = [...bundleCandidates(entry)]
-  try { urls.push(...await resolveUpdateUrls(entry)) } catch { /* 忽略 */ }
-  if (!urls.length) throw new Error(t('comics.storeNoBundle'))
-  let lastError = ''
-  for (const url of urls) {
-    try {
-      const code = await readRemoteText(url, 'application/javascript, text/plain, */*', BUNDLE_FETCH_TIMEOUT)
-      if (!looksLikeBundle(code)) { lastError = t('comics.storeInvalidBundle'); continue }
-      const plugin = await installFromCode(code, 'store', url, {
-        storeUuid: entry.uuid,
-        storeVersion: entry.version,
-      })
-      return { plugin, url }
-    } catch (e: any) {
-      lastError = e?.message ?? String(e)
+  const errors: string[] = []
+  const tryUrls = async (urls: string[]): Promise<StoreInstallResult | null> => {
+    for (const url of urls) {
+      try {
+        const code = await readRemoteText(url, 'application/javascript, text/plain, */*', BUNDLE_FETCH_TIMEOUT)
+        if (!looksLikeBundle(code)) { errors.push(t('comics.storeInvalidBundle')); continue }
+        const plugin = await installFromCode(code, 'store', url, {
+          storeUuid: entry.uuid,
+          storeVersion: entry.version,
+        })
+        return { plugin, url }
+      } catch (e: any) {
+        errors.push(e?.message ?? String(e))
+      }
     }
+    return null
   }
-  throw new Error(`${t('comics.storeNoBundle')}${lastError ? ` (${lastError})` : ''}`)
+
+  // 分级尝试: 直连候选 → 仓库文件清单 → Release 资源 → updateUrl。
+  // 前一级成功就不再发后续请求, 列表页点「安装」不该先等一串兜底请求。
+  const direct = await tryUrls(bundleCandidates(entry))
+  if (direct) return direct
+  if (entry.repo) {
+    const fromRepo = await tryUrls(await repoBundleCandidates(entry.repo))
+    if (fromRepo) return fromRepo
+    const fromRelease = await tryUrls(await releaseBundleCandidates(entry.repo))
+    if (fromRelease) return fromRelease
+  }
+  try {
+    const fromUpdate = await tryUrls(await resolveUpdateUrls(entry))
+    if (fromUpdate) return fromUpdate
+  } catch { /* 忽略updateUrl 失败 */ }
+
+  // 候选里一堆 404 是常态; 报最像「真正原因」的那条, 否则一直显示 404 会误导
+  const meaningful = errors.find(e => !/HTTP 404|Failed to fetch|NetworkError|fetch failed/i.test(e))
+  const detail = meaningful ?? errors[errors.length - 1] ?? ''
+  throw new Error(`${t('comics.storeNoBundle')}${detail ? ` (${detail})` : ''}`)
 }

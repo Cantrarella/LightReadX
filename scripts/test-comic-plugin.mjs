@@ -72,6 +72,24 @@ module.exports.default = {
   unauthorized: async () => { throw Error(JSON.stringify({ type: 'unauthorized', message: '登录已失效' })); },
   boom: async () => { throw new Error('boom from plugin') },
   slow: async () => new Promise(() => {}),
+  // 绅士漫画那类插件在模块顶层就要求 BreezeHtml, 少一个全局直接加载失败
+  htmlPick: async () => {
+    var html = '<div class="sr_compact"><a href="/c/1" data-src="//img/1.jpg">标题一</a>' +
+               '<a href="/c/2"><img src="/img/2.jpg"></a></div><ul id="classTit"><li>乙</li></ul>';
+    var $ = BreezeHtml.load(html);
+    var links = $('.sr_compact a').toArray().map(function (el) {
+      var n = $(el);
+      return n.attr('href') + '|' + (n.attr('data-src') || n.find('img').attr('src') || '') + '|' + n.text();
+    });
+    return { links: links, id: $('#classTit li').text(), tag: $('li').length };
+  },
+  procEnv: async () => ({ d: process.env.BAOZIMH_DOMAIN || '', p: typeof process.nextTick }),
+  headerJson: async () => JSON.stringify(new Headers({ 'X-Test': 'ok' })),
+  // 同一宿主上并发调用: 各自必须拿到自己的结果
+  identityLater: async p => {
+    await new Promise(function (r) { setTimeout(r, p.delay); });
+    return p.value;
+  },
 };
 `
 
@@ -152,10 +170,29 @@ module.exports.default = {
   await assert.rejects(() => host.call('boom', {}), /boom from plugin/)
   await assert.rejects(() => host.call('slow', {}, { timeoutMs: 300 }), /超时/)
 
+  // ---- BreezeHtml / process / Headers: 缺任何一个, 商店里那两个插件都装不上 ----
+  const picked = await host.call('htmlPick')
+  assert.deepEqual(picked.links, [
+    '/c/1|//img/1.jpg|标题一',
+    '/c/2|/img/2.jpg|',
+  ], 'BreezeHtml 解析 + .sr_compact a 选择器 + attr/text/find')
+  assert.equal(picked.id, '乙', '#id 后代选择器')
+  assert.equal(picked.tag, 1, '标签选择器')
+  assert.deepEqual(await host.call('procEnv'), { d: '', p: 'function' }, 'process.env 兜底')
+  assert.equal(await host.call('headerJson'), '{"x-test":"ok"}', 'Headers 要能摊平成字典给宿主 fetch')
+
+  // ---- 同一宿主并发调用: 结果不能互相覆盖 (并发拉封面时曾导致整页像卡死) ----
+  const [fast, slowOne] = await Promise.all([
+    host.call('identityLater', { delay: 10, value: 'fast' }, { timeoutMs: 5000 }),
+    host.call('identityLater', { delay: 400, value: 'slow' }, { timeoutMs: 5000 }),
+  ])
+  assert.equal(fast, 'fast', '快调用要拿到自己的结果')
+  assert.equal(slowOne, 'slow', '慢调用要拿到自己的结果')
+
   host.dispose()
   await assert.rejects(() => host.call('getInfo', {}), /已释放/)
 
-  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / bytes / error / timeout / dispose)')
+  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / bytes / error / timeout / BreezeHtml / process / Headers / 并发隔离 / dispose)')
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

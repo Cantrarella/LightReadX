@@ -58,12 +58,55 @@ let coverSeq = 0
 
 onBeforeUnmount(() => {
   closeReader()
+  coverObserver?.disconnect()
+  coverObserver = null
   coverHost?.dispose()
   coverHost = null
   for (const url of Object.values(covers)) URL.revokeObjectURL(url)
 })
 
 /** 封面也走插件的 fetchImageBytes (带防盗链头), 一个长驻宿主并发拉取 */
+/** 一次最多预取多少张封面: 搜索结果动辄 80 条, 全量同步拉会把插件宿主占满 */
+const COVER_LIMIT = 12
+const COVER_WORKERS = 3
+
+/** 单张封面: 供滚动懒加载使用 */
+async function loadOneCover(item: ComicSearchItem) {
+  const url = coverUrl(item.cover)
+  if (!url || covers[item.id]) return
+  if (!coverHost) coverHost = await openPlugin(uuid)
+  const bytes = await coverHost.callBytes('fetchImageBytes', { url }, { timeoutMs: 20_000 })
+  if (bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, url)
+}
+
+// 滚动到哪补到哪: 首屏预取 COVER_LIMIT 张, 其余等卡片进入视口再拉,
+// 既不会出现大片占位图, 也不会因为一次拉几十上百张把界面拖死
+let coverObserver: IntersectionObserver | null = null
+const coverInFlight = new Set<string>()
+let coverItems: ComicSearchItem[] = []
+
+function watchCovers(list: ComicSearchItem[]) {
+  coverItems = list
+  if (typeof IntersectionObserver === 'undefined') return
+  coverObserver?.disconnect()
+  coverObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+      const id = (entry.target as HTMLElement).dataset.coverId
+      const item = id ? coverItems.find(i => i.id === id) : undefined
+      if (!item || covers[item.id] || coverInFlight.has(item.id)) continue
+      coverInFlight.add(item.id)
+      coverObserver?.unobserve(entry.target)
+      void loadOneCover(item).catch(() => { /* 失败留占位图 */ })
+        .finally(() => coverInFlight.delete(item.id))
+    }
+  }, { rootMargin: '300px' })
+  void nextTick(() => {
+    document.querySelectorAll<HTMLElement>('.result-card[data-cover-id]')
+      .forEach(el => coverObserver?.observe(el))
+  })
+}
+
 async function loadCovers(list: ComicSearchItem[]) {
   const seq = ++coverSeq
   if (!coverHost) coverHost = await openPlugin(uuid)
@@ -72,24 +115,26 @@ async function loadCovers(list: ComicSearchItem[]) {
   const queue = list.filter(item => {
     const url = coverUrl(item.cover)
     return url && !covers[item.id]
-  })
+  }).slice(0, COVER_LIMIT)
   let cursor = 0
   const worker = async () => {
     while (seq === coverSeq && cursor < queue.length) {
       const item = queue[cursor++]
       const url = coverUrl(item.cover)
       try {
-        const bytes = await host.callBytes('fetchImageBytes', { url }, { timeoutMs: 30_000 })
+        const bytes = await host.callBytes('fetchImageBytes', { url }, { timeoutMs: 20_000 })
         if (seq === coverSeq && bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, url)
       } catch { /* 单张封面失败用占位图 */ }
     }
   }
-  await Promise.all(Array.from({ length: 4 }, () => worker()))
+  await Promise.all(Array.from({ length: COVER_WORKERS }, () => worker()))
+  if (seq === coverSeq) watchCovers(list)
 }
 
 async function doSearch(reset = true) {
   const kw = keyword.value.trim()
   if (!kw || searching.value) return
+  coverSeq++            // 停掉上一批还在跑的封面任务, 别和新结果抢宿主
   view.value = 'search'
   if (reset) { page.value = 1; items.value = []; paging.value = undefined }
   searching.value = true
@@ -364,7 +409,7 @@ function switchChapter(offset: number) {
       <p v-if="searchError" class="error-text">{{ searchError }}</p>
       <p v-if="searching" class="hint loading-hint">{{ t('comics.searching') }}</p>
       <div v-if="items.length" class="result-grid">
-        <button v-for="item in items" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
+        <button v-for="item in items" :key="item.id" type="button" class="result-card" :data-cover-id="item.id" @click="openDetail(item)">
           <div class="result-cover">
             <img v-if="covers[item.id]" :src="covers[item.id]" alt="" loading="lazy" />
             <div v-else class="cover-placeholder" aria-hidden="true">
@@ -528,9 +573,18 @@ function switchChapter(offset: number) {
 .spacer { flex: 1; }
 .count { color: var(--text-3); font-size: 13px; white-space: nowrap; }
 .back-btn { padding-left: 8px; }
-.search-field { position: relative; display: flex; align-items: center; width: 260px; max-width: 100%; }
+.search-field { position: relative; display: flex; align-items: center; width: 340px; max-width: 100%; }
 .search-icon { position: absolute; left: 12px; color: var(--text-3); pointer-events: none; }
-.search { width: 100%; padding-left: 34px; padding-right: 30px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
+/* 输入框和右侧按钮统一用 --control-h, 高度对齐; 原来没给高度, 比按钮矮一截显得不协调 */
+.search {
+  width: 100%; height: var(--control-h);
+  padding: 0 30px 0 34px;
+  border-color: transparent; border-radius: var(--radius-pill);
+  background: var(--surface-2); font-size: 13px;
+}
+.search::-webkit-search-cancel-button { -webkit-appearance: none; }
+/* 顶栏按钮收一点, 别压过搜索框 */
+.toolbar .btn { padding: 0 12px; font-size: 13px; }
 .hint { color: var(--text-3); font-size: 13px; line-height: 1.6; margin: 0; }
 .loading-hint { padding: 12px 0; }
 .section-title { font-size: 15px; font-weight: 600; margin: 4px 0 14px; color: var(--text-2); }
