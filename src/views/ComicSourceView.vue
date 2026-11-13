@@ -3,7 +3,7 @@
  * 漫画源: 搜索 → 详情/章节 → 在线阅读 / 下载入库。
  * UI 沿用藏书页与漫画页的卡片、按钮、工具栏语言, 不另起一套视觉。
  */
-import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLibrary } from '../stores/library'
 import { toast } from '../services/toast'
@@ -129,7 +129,26 @@ async function openDetail(item: ComicSearchItem) {
 function backToSearch() {
   view.value = 'search'
   closeReader()
+  // 从发现页带参数进来时, 返回后清掉 query, 避免刷新又跳回详情
+  if (route.query.comicId || route.query.keyword) {
+    void router.replace({ path: route.path })
+  }
 }
+
+/** 发现页 / 外部链接可带 comicId 直达详情, 或带 keyword 自动搜索 */
+onMounted(() => {
+  if (!plugin) return
+  const comicIdParam = String(route.query.comicId ?? '')
+  if (comicIdParam) {
+    void openDetail({ id: comicIdParam, title: String(route.query.title ?? '') } as ComicSearchItem)
+    return
+  }
+  const keywordParam = String(route.query.keyword ?? '')
+  if (keywordParam) {
+    keyword.value = keywordParam
+    void doSearch()
+  }
+})
 
 function taskKey(chapter: ComicChapter) {
   return `${uuid}:${comicId.value}:${chapterRequestId(chapter)}`

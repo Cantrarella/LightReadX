@@ -134,6 +134,14 @@ async function uninstall(plugin: InstalledComicPlugin) {
 function openSource(plugin: InstalledComicPlugin) {
   router.push(`/comics/source/${encodeURIComponent(plugin.uuid)}`)
 }
+
+function openDiscover(plugin: InstalledComicPlugin) {
+  router.push(`/comics/discover/${encodeURIComponent(plugin.uuid)}`)
+}
+
+function openStore() {
+  router.push('/comics/store')
+}
 </script>
 
 <template>
@@ -148,6 +156,10 @@ function openSource(plugin: InstalledComicPlugin) {
         <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <input v-model="keyword" class="search" type="search" :placeholder="t('comics.searchLocal')" :aria-label="t('comics.searchLocal')" />
       </div>
+      <button class="btn" @click="openStore">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16v12H4zM4 10h16M9 6v12"/></svg>
+        {{ t('comics.store') }}
+      </button>
       <button class="btn btn-primary" :disabled="importing" @click="fileInput?.click()">
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
         {{ t('comics.import') }}
@@ -184,6 +196,7 @@ function openSource(plugin: InstalledComicPlugin) {
         <h2 class="section-title">{{ t('comics.sources') }}</h2>
         <span v-if="plugins.length" class="count">{{ t('comics.sourceCount', { count: plugins.length }) }}</span>
         <div class="spacer" />
+        <button class="btn" @click="openStore">{{ t('comics.store') }}</button>
         <button class="btn" @click="showInstall = true">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
           {{ t('comics.installSource') }}
@@ -208,6 +221,7 @@ function openSource(plugin: InstalledComicPlugin) {
           </div>
           <div class="source-actions">
             <button class="btn btn-primary" :disabled="!plugin.enabled" @click="openSource(plugin)">{{ t('comics.openSource') }}</button>
+            <button class="btn" :disabled="!plugin.enabled" @click="openDiscover(plugin)">{{ t('comics.discover') }}</button>
             <button class="btn" @click="togglePlugin(plugin)">{{ plugin.enabled ? t('comics.disable') : t('comics.enable') }}</button>
             <button class="btn btn-ghost" @click="uninstall(plugin)">{{ t('comics.uninstall') }}</button>
           </div>

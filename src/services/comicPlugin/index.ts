@@ -118,15 +118,19 @@ async function inspect(code: string, request?: OpenOptions['request']): Promise<
   }
 }
 
-async function installFromCode(
+export async function installFromCode(
   code: string,
   source: InstalledComicPlugin['source'],
   origin?: string,
+  /** 商店安装时带入索引信息, 保留原有 enabled 状态 */
+  extra?: Pick<InstalledComicPlugin, 'storeUuid' | 'storeVersion'>,
 ): Promise<InstalledComicPlugin> {
   if (!code.trim()) throw new Error(t('comics.emptyPlugin'))
   const info = await inspect(code)
+  const uuid = asString(info.uuid) || fallbackUuid(info.name)
+  const previous = registry.getPlugin(uuid)
   const plugin: InstalledComicPlugin = {
-    uuid: asString(info.uuid) || fallbackUuid(info.name),
+    uuid,
     name: info.name,
     version: asString(info.version) || '',
     describe: asString(info.describe),
@@ -135,10 +139,11 @@ async function installFromCode(
     updateUrl: asString(info.updateUrl),
     npmName: asString(info.npmName),
     code,
-    enabled: true,
-    installedAt: Date.now(),
+    enabled: previous?.enabled ?? true,
+    installedAt: previous?.installedAt ?? Date.now(),
     source,
     origin,
+    ...(extra ?? {}),
   }
   registry.savePlugin(plugin)
   return plugin

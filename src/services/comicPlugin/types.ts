@@ -137,6 +137,10 @@ export interface InstalledComicPlugin {
   source: 'file' | 'url' | 'store'
   /** 文件名或安装 URL */
   origin?: string
+  /** 从商店安装时记录索引里的 uuid (插件自述的 uuid 偶尔与索引不一致) */
+  storeUuid?: string
+  /** 商店安装时索引里的版本, 用于更新提示 */
+  storeVersion?: string
 }
 
 /** 宿主提供给插件沙箱的一次网络请求 */
