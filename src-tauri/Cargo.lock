@@ -2481,7 +2481,6 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "unrar",
- "ureq",
  "uuid",
  "windows",
  "windows-sys 0.59.0",
