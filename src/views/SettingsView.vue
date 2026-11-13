@@ -812,6 +812,21 @@ async function resetLibraryRoot() {
   setTimeout(() => location.reload(), 300)
 }
 
+/** 在资源管理器中打开书库文件夹 */
+async function openLibraryFolder() {
+  try {
+    const [{ openPath }, { appDataDir, join }] = await Promise.all([
+      import('@tauri-apps/plugin-opener'),
+      import('@tauri-apps/api/path'),
+    ])
+    const base = settings.libraryRoot || await appDataDir()
+    const books = await join(base, 'books')
+    await openPath(books)
+  } catch (e: any) {
+    toast(failText('settings.openFolderFailed', e), 'error', 5000)
+  }
+}
+
 async function doExport() {
   busyScope.value = 'local'
   busy.value = t('settings.preparingExport')
@@ -1522,6 +1537,7 @@ const APPEARANCE_OPTIONS = [
           </div>
         </div>
         <div class="row-actions">
+          <button class="btn" :disabled="!!migrating" @click="openLibraryFolder">{{ t('settings.openFolder') }}</button>
           <button class="btn" :disabled="!!migrating" @click="changeLibraryRoot">{{ t('settings.changeLocation') }}</button>
           <button v-if="settings.libraryRoot" class="btn" :disabled="!!migrating" @click="resetLibraryRoot">{{ t('settings.restoreDefault') }}</button>
         </div>

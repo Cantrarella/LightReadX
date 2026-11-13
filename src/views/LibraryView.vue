@@ -12,6 +12,7 @@ import { IMPORT_FORMATS, planFolderPick, type FolderPlan } from '../services/fol
 import { canPickFolder, loadFolderFile, scanNativePaths, scanFromFileList, scanNativeFolder, useNativeFolderPicker, type FolderFile, type FolderScan } from '../services/folderSource'
 import { nativeDragging, nativeDropQueue } from '../services/nativeDrop'
 import { importFromUrl } from '../services/urlImport'
+import { canScanLibraryLoose, importLibraryLooseFiles } from '../services/libraryScan'
 import { sendBookToDevices } from '../services/transfer'
 import { canConvertToEpub } from '../services/format'
 import { MQ, useMediaQuery } from '../composables/useMediaQuery'
@@ -456,6 +457,32 @@ async function doUrlImport() {
 
 // ---- 导入菜单 ----
 const importMenu = ref(false)
+
+// ---- 扫描书库目录散文件 (桌面端) ----
+const scanLibrarySupported = canScanLibraryLoose()
+const scanningLibrary = ref(false)
+
+async function scanLibraryLoose() {
+  importMenu.value = false
+  if (importing.value || scanningLibrary.value) return
+  scanningLibrary.value = true
+  try {
+    const res = await importLibraryLooseFiles()
+    await library.refresh()
+    if (res.imported > 0) {
+      const extra = res.failed.length ? t('library.scanLooseFailed', { n: res.failed.length }) : ''
+      toast(`${t('library.scanLooseImported', { n: res.imported })}${extra}`, res.failed.length ? 'error' : 'success', 5000)
+    } else if (res.failed.length) {
+      toast(t('library.scanLooseFailed', { n: res.failed.length }), 'error', 5000)
+    } else {
+      toast(t('library.scanLooseEmpty'), 'info')
+    }
+  } catch (e: any) {
+    toast(t('library.scanLooseError', { msg: e?.message ?? String(e) }), 'error', 6000)
+  } finally {
+    scanningLibrary.value = false
+  }
+}
 
 // ---- 批量管理 ----
 function toggleManage() {
@@ -925,6 +952,10 @@ async function batchClearTags() {
           <button v-if="folderSupported" role="menuitem" class="import-folder" @click="chooseFolder()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 11h8M8 15h5"/></svg>
             {{ t('folder.choose') }}
+          </button>
+          <button v-if="scanLibrarySupported" role="menuitem" :disabled="scanningLibrary" @click="scanLibraryLoose()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/></svg>
+            {{ scanningLibrary ? t('library.scanLooseRunning') : t('library.scanLoose') }}
           </button>
           <button role="menuitem" @click="importMenu = false; showUrlModal = true">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10.6 13.4a1 1 0 0 1 0-1.4l2.8-2.8a1 1 0 0 1 1.4 1.4l-2.8 2.8a1 1 0 0 1-1.4 0zM7 17a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 1 1 1.42 1.42L8.4 14.17a1 1 0 0 0 1.42 1.42l2.12-2.12a1 1 0 1 1 1.41 1.41L11.24 17A3 3 0 0 1 7 17zm10-10a3 3 0 0 1 0 4.24l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.12-2.11a1 1 0 0 0-1.42-1.42l-2.12 2.12a1 1 0 0 1-1.41-1.41L12.76 7A3 3 0 0 1 17 7z"/></svg>
