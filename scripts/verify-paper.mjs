@@ -559,7 +559,6 @@ await step('Mock AI 辅读对话、停止操作与论文十问人工修订闭环
   await pg.evaluate(() => {
     const settings = JSON.parse(localStorage.getItem('lightread-settings') || '{}')
     settings.libraryRoot = '/tmp/lightread-agent-test'
-    settings.paperAgentEngine = 'pi'
     localStorage.setItem('lightread-settings', JSON.stringify(settings))
   })
   await pg.reload({ waitUntil: 'networkidle' })

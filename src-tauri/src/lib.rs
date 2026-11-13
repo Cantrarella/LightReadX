@@ -1,4 +1,3 @@
-mod agent;
 mod app_update;
 mod background_process;
 mod backup_zip;
@@ -183,8 +182,6 @@ pub fn run() {
 
   let app = builder
     .manage(OpenFilesState::default())
-    .manage(agent::ContextState::default())
-    .manage(agent::AgentSupervisor::default())
     .manage(babeldoc::BabeldocState::default())
     .manage(stealth::StealthState::default())
     .invoke_handler(tauri::generate_handler![
@@ -194,22 +191,6 @@ pub fn run() {
       diagnostics::diagnostics_system_info,
       take_open_files,
       read_open_file,
-      agent::context::agent_snapshot_begin,
-      agent::context::agent_snapshot_append_text,
-      agent::context::agent_snapshot_finalize,
-      agent::context::agent_snapshot_abort,
-      agent::context::agent_cleanup_paper,
-      agent::context::agent_workspace_path,
-      agent::supervisor::agent_active_turn,
-      agent::supervisor::agent_replay_events,
-      agent::supervisor::agent_stop_turn,
-      agent::supervisor::agent_respond_interaction,
-      agent::engines::agent_engine_status,
-      agent::engines::agent_start_turn,
-      agent::engines::agent_reset_session,
-      agent::worksheet::agent_worksheet_load,
-      agent::worksheet::agent_worksheet_save_draft,
-      agent::worksheet::agent_worksheet_commit_human,
       cloud_tts::cloud_tts_synthesize,
       edge_tts::edge_tts_synthesize,
       sapi_tts::sapi_tts_voices,
@@ -305,9 +286,6 @@ pub fn run() {
     .expect("error while building tauri application");
 
   app.run(|app_handle, event| {
-    if matches!(&event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
-      app_handle.state::<agent::AgentSupervisor>().stop_all();
-    }
     // 正常退出时正在朗读不算闪退
     if matches!(&event, tauri::RunEvent::Exit) {
       local_tts::clear_crash_marker_on_exit(app_handle);

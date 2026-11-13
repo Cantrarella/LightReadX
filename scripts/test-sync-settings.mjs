@@ -37,8 +37,7 @@ test('每个默认设置都已归类 (sync / secret / local), 归类表没有多
   walk(settingsDefaults(), SETTINGS_SYNC_SPEC, '')
   assert.deepEqual([...SECRET_SETTING_PATHS].sort(), ['aiApiKey', 'doubaoApiKey', 'doubaoAppId', 'minimaxApiKey', 'webdavPass'])
   for (const p of [
-    'libraryRoot', 'calibrePath', 'customFonts', 'httpProxy', 'corsProxy', 'paperAgentEngine',
-    'paperAgentExecutables', 'usageStats', 'syncSettings', 'syncSecrets', 'version', 'webdavSyncAuto',
+    'libraryRoot', 'calibrePath', 'customFonts', 'httpProxy', 'corsProxy', 'usageStats', 'syncSettings', 'syncSecrets', 'version', 'webdavSyncAuto',
     'webdavSyncFiles', 'ttsEngine', 'ttsVoice', 'dianjing.perBook', 'dianjing.fiction', 'readingMode.presets',
     'readingMode.eink', 'readingMode.largeText',
   ]) assert.ok(LOCAL_SETTING_PATHS.includes(p), `${p} 应只属于本机`)
