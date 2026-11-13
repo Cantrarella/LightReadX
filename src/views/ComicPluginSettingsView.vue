@@ -34,16 +34,26 @@ const saving = ref(false)
 const error = ref('')
 const notice = ref('')
 
-const userName = computed(() => String(userInfo.value.username ?? userInfo.value.nickname ?? ''))
-const userAvatar = computed(() => String(userInfo.value.photo ?? userInfo.value.avatar ?? ''))
+const avatarFailed = ref(false)
+const userName = computed(() => String(userInfo.value.username ?? userInfo.value.nickname ?? userInfo.value.name ?? ''))
+const userAvatar = computed(() => avatarFailed.value ? '' : String(userInfo.value.photo ?? userInfo.value.avatar ?? ''))
+const userLines = computed(() => {
+  const lines = userInfo.value.lines
+  return Array.isArray(lines) ? lines.map(v => String(v)).filter(Boolean) : []
+})
 const userMeta = computed(() => {
+  // Breeze 渲染型 bundle 自带 lines (等级 / 经验值), 原样展示比拼字段更准
+  if (userLines.value.length > 1) return userLines.value.slice(1).join(' · ')
   const level = userInfo.value.level_name ?? userInfo.value.levelName ?? ''
   const coin = userInfo.value.coin ?? ''
   const exp = userInfo.value.exp ?? ''
   return [level && String(level), coin && `${t('comics.userCoin')} ${coin}`, exp && `${t('comics.userExp')} ${exp}`]
     .filter(Boolean).join(' · ')
 })
-const loggedIn = computed(() => !!userName.value)
+// 新版插件只有 lines / avatar / uid, 没有 username; 有任一渲染型字段就算已登录
+const loggedIn = computed(() => userInfo.value.loggedIn === true || !!userName.value || userLines.value.length > 0)
+// Breeze 的第一行是「用户名 (硬币: x)」, 有 lines 就原样显示
+const userTitle = computed(() => userLines.value[0] || userName.value)
 
 function messageOf(e: unknown): string {
   if (isUnauthorizedError(e)) return t('comics.loginRequired')
@@ -53,6 +63,7 @@ function messageOf(e: unknown): string {
 async function loadAll() {
   loading.value = true
   error.value = ''
+  avatarFailed.value = false
   try {
     settings.value = await loadPluginSettings(uuid)
     for (const [key, value] of Object.entries(settings.value.values)) settingValues[key] = value
@@ -112,7 +123,8 @@ async function doCapability(cap: PluginCapability) {
 }
 
 function goCloudFavorite() {
-  void router.push(`/comics/discover/${encodeURIComponent(uuid)}?tab=cloudFavorite`)
+  // 发现页已并入漫画源「进入」页, 云端收藏是其中的一个 tab
+  void router.push(`/comics/source/${encodeURIComponent(uuid)}?tab=cloudFavorite`)
 }
 
 function updateField(target: Record<string, unknown>, key: string, event: Event) {
@@ -145,12 +157,12 @@ function updateField(target: Record<string, unknown>, key: string, event: Event)
           <button v-if="settings?.canLogin" class="btn" @click="openLogin">{{ loggedIn ? t('comics.relogin') : t('comics.login') }}</button>
         </div>
         <div v-if="loggedIn" class="user-row">
-          <img v-if="userAvatar" :src="userAvatar" class="user-avatar" alt="" referrerpolicy="no-referrer" />
+          <img v-if="userAvatar" :src="userAvatar" class="user-avatar" alt="" referrerpolicy="no-referrer" @error="avatarFailed = true" />
           <div v-else class="user-avatar user-avatar-fallback" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
           </div>
           <div class="user-meta">
-            <div class="user-name">{{ userName }}</div>
+            <div class="user-name">{{ userTitle }}</div>
             <div v-if="userMeta" class="hint">{{ userMeta }}</div>
           </div>
         </div>

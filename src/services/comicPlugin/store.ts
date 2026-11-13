@@ -186,49 +186,124 @@ function readCache(): Record<string, CachedIndex> {
   return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
 }
 
-/** 拉取所有启用的订阅源并合并 (uuid 去重); 缓存兜底, 单个源失败不影响其它源 */
+/** 单次网络硬超时; 桌面 WebView 的原生 HTTP 可能忽略 AbortSignal, 不能只靠它 */
+// 离线回归可在 import 前把 globalThis.__LR_STORE_TIMEOUT__ 调小, 验证挂起请求能及时返回
+const testTimeout = Number((globalThis as { __LR_STORE_TIMEOUT__?: number }).__LR_STORE_TIMEOUT__)
+const STORE_FETCH_TIMEOUT = Number.isFinite(testTimeout) && testTimeout > 0 ? testTimeout : 12_000
+const BUNDLE_FETCH_TIMEOUT = 15_000
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+/** 不依赖 AbortSignal 的硬超时: 挂起的底层请求不再阻塞 UI, 也不会留下未处理的 rejection */
+function withHardTimeout<T>(task: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} (${Math.round(ms / 1000)}s)`)), ms)
+    task.then(
+      value => { clearTimeout(timer); resolve(value) },
+      err => { clearTimeout(timer); reject(err) },
+    )
+  })
+}
+
+/** 请求 + 读 body 都受硬超时保护 (WebView 里 body 也可能一直不返回) */
+async function readRemoteText(url: string, accept: string, ms: number): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    const res = await withHardTimeout(
+      fetchRemote(url, undefined, { raw: true, headers: { accept }, signal: controller.signal }),
+      ms, t('comics.storeTimeout'),
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await withHardTimeout(res.text(), ms, t('comics.storeTimeout'))
+  } finally { clearTimeout(timer) }
+}
+
+/** 桌面 WebView 原生 HTTP 挂住时, 换浏览器 fetch 再走一次 (索引站普遍允许 CORS) */
+async function readIndexViaBrowser(url: string): Promise<string> {
+  const res = await withHardTimeout(
+    fetch(url, {
+      headers: { accept: 'application/json, */*' },
+      signal: AbortSignal.timeout(STORE_FETCH_TIMEOUT),
+    }),
+    STORE_FETCH_TIMEOUT, t('comics.storeTimeout'),
+  )
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return withHardTimeout(res.text(), STORE_FETCH_TIMEOUT, t('comics.storeTimeout'))
+}
+
+async function readIndex(url: string): Promise<string> {
+  try {
+    return await readRemoteText(url, 'application/json, */*', STORE_FETCH_TIMEOUT)
+  } catch (nativeError) {
+    try {
+      return await readIndexViaBrowser(url)
+    } catch (webError) {
+      throw new Error(`${messageOf(nativeError)} / WebView: ${messageOf(webError)}`)
+    }
+  }
+}
+
+/** 先把上次缓存吐给 UI, 不等待网络; 桌面端首次打开也不会一直转圈 */
+export function loadCachedStore(): StoreEntry[] {
+  const cache = readCache()
+  const out: StoreEntry[] = []
+  const seen = new Set<string>()
+  for (const sub of listSubscriptions().filter(s => s.enabled)) {
+    for (const entry of cache[sub.id]?.entries ?? []) {
+      if (!seen.has(entry.uuid)) { seen.add(entry.uuid); out.push(entry) }
+    }
+  }
+  return out
+}
+
+interface SubResult {
+  id: string
+  entries: StoreEntry[]
+  at: number
+  fromCache: boolean
+  error: string
+  fresh: StoreEntry[] | null
+}
+
+/** 并行拉取所有启用订阅源并合并; 单源超时/失败不拖全局, 旧缓存随时兜底 */
 export async function loadStore(force = false): Promise<StoreLoadResult> {
   const subs = listSubscriptions().filter(s => s.enabled)
   const cache = readCache()
-  const errors: string[] = []
+  const settled = await Promise.all(subs.map(async (sub): Promise<SubResult> => {
+    const hit = cache[sub.id]
+    if (hit && !force && Date.now() - hit.at < CACHE_TTL) {
+      return { id: sub.id, entries: hit.entries, at: hit.at, fromCache: true, error: '', fresh: null }
+    }
+    try {
+      const list = parseStoreIndex(JSON.parse(await readIndex(sub.url)), sub)
+      if (!list.length) throw new Error(t('comics.storeEmptyIndex'))
+      return { id: sub.id, entries: list, at: Date.now(), fromCache: false, error: '', fresh: list }
+    } catch (e) {
+      return {
+        id: sub.id,
+        entries: hit?.entries ?? [], at: hit?.at ?? 0,
+        fromCache: !!hit, error: `${sub.name}: ${messageOf(e)}`, fresh: null,
+      }
+    }
+  }))
+
   const entries: StoreEntry[] = []
+  const errors: string[] = []
   const seen = new Set<string>()
   let fromCache = false
   let fetchedAt = 0
-
-  for (const sub of subs) {
-    const hit = cache[sub.id]
-    const fresh = hit && !force && Date.now() - hit.at < CACHE_TTL
-    if (fresh) {
-      for (const e of hit.entries) if (!seen.has(e.uuid)) { seen.add(e.uuid); entries.push(e) }
-      fetchedAt = Math.max(fetchedAt, hit.at)
-      fromCache = true
-      continue
-    }
-    try {
-      const res = await fetchRemote(sub.url, undefined, {
-        raw: true,
-        headers: { accept: 'application/json, */*' },
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const parsed = JSON.parse(await res.text()) as unknown
-      const list = parseStoreIndex(parsed, sub)
-      if (!list.length) throw new Error(t('comics.storeEmptyIndex'))
-      cache[sub.id] = { at: Date.now(), entries: list }
-      writeJson(CACHE_KEY, cache)
-      for (const e of list) if (!seen.has(e.uuid)) { seen.add(e.uuid); entries.push(e) }
-      fetchedAt = Math.max(fetchedAt, cache[sub.id].at)
-    } catch (e: any) {
-      errors.push(`${sub.name}: ${e?.message ?? e}`)
-      // 联网失败时用过期的缓存顶上, 保证离线也能看到列表
-      if (hit) {
-        for (const item of hit.entries) if (!seen.has(item.uuid)) { seen.add(item.uuid); entries.push(item) }
-        fetchedAt = Math.max(fetchedAt, hit.at)
-        fromCache = true
-      }
-    }
+  let cacheChanged = false
+  for (const r of settled) {
+    if (r.fresh) { cache[r.id] = { at: r.at, entries: r.fresh }; cacheChanged = true }
+    for (const entry of r.entries) if (!seen.has(entry.uuid)) { seen.add(entry.uuid); entries.push(entry) }
+    if (r.error) errors.push(r.error)
+    if (r.fromCache) fromCache = true
+    if (r.at) fetchedAt = Math.max(fetchedAt, r.at)
   }
+  if (cacheChanged) writeJson(CACHE_KEY, cache)
   return { entries, errors, fromCache, fetchedAt }
 }
 
@@ -305,13 +380,7 @@ export async function resolveUpdateUrls(entry: StoreEntry): Promise<string[]> {
   // 已经是源码直链, 不必再请求
   if (/\.(cjs|mjs|js)(\?|$)/i.test(url)) return [url]
   try {
-    const res = await fetchRemote(url, undefined, {
-      raw: true,
-      headers: { accept: 'application/json, */*' },
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (!res.ok) return []
-    const parsed = JSON.parse(await res.text()) as unknown
+    const parsed = JSON.parse(await readRemoteText(url, 'application/json, */*', BUNDLE_FETCH_TIMEOUT)) as unknown
     return collectBundleLinks(parsed)
   } catch { return [] }
 }
@@ -359,13 +428,7 @@ export async function installStoreEntry(entry: StoreEntry): Promise<StoreInstall
   let lastError = ''
   for (const url of urls) {
     try {
-      const res = await fetchRemote(url, undefined, {
-        raw: true,
-        headers: { accept: 'application/javascript, text/plain, */*' },
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!res.ok) { lastError = `HTTP ${res.status}`; continue }
-      const code = await res.text()
+      const code = await readRemoteText(url, 'application/javascript, text/plain, */*', BUNDLE_FETCH_TIMEOUT)
       if (!looksLikeBundle(code)) { lastError = t('comics.storeInvalidBundle'); continue }
       const plugin = await installFromCode(code, 'store', url, {
         storeUuid: entry.uuid,

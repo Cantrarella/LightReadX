@@ -1,20 +1,19 @@
 <script setup lang="ts">
 /**
- * 漫画发现页: 渲染 Breeze 插件的 Scheme + data 页面协议。
+ * 漫画源「进入」页里的浏览面板 (由原发现页改造而来): 渲染 Breeze 插件的
+ * Scheme + data 页面协议, 支持四种区块 / scene 分页 / 二级筛选 / 云端收藏 tab。
  *
- * 支持 chip-list / action-grid / comic-section-list / comic-grid 四种区块,
- * scene 分页列表与筛选, 以及 openComicInfo / openSearch / openComicList /
- * openPluginFunction / openWeb 五类 action。封面走插件的 fetchImageBytes,
- * 与漫画源搜索页共用同一套防盗链处理。
+ * 独立发现页已取消, 本组件嵌在 ComicSourceView 里, 点漫画或搜索词通过 emit
+ * 交给父页面切到详情 / 搜索视图, 保证整个漫画源只有一个入口。
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { toast } from '../services/toast'
 import { openExternalLink } from '../services/transfer'
 import { getPlugin, isUnauthorizedError, openPlugin, type ComicPluginHost } from '../services/comicPlugin'
 import { bytesToObjectUrl } from '../services/comicPlugin/download'
-import AppModal from '../components/AppModal.vue'
+import AppModal from './AppModal.vue'
 import {
   comicIdOf, loadDiscoverHome, loadFunctionPage, loadSceneFilter,
   loadScenePage, mergeFilterResult, normalizeScene,
@@ -22,9 +21,13 @@ import {
   type DiscoverPage, type FilterField, type PluginAction,
 } from '../services/comicPlugin/discover'
 
-const route = useRoute()
+const props = defineProps<{ uuid: string; initialTab?: string }>()
+const emit = defineEmits<{
+  (e: 'openComic', payload: { comicId: string; title?: string }): void
+  (e: 'openSearch', payload: { keyword: string }): void
+}>()
 const router = useRouter()
-const uuid = String(route.params.uuid ?? '')
+const uuid = props.uuid
 const plugin = getPlugin(uuid)
 
 type Overlay =
@@ -64,8 +67,8 @@ async function loadHome() {
   overlay.value = null
   try {
     home.value = await loadDiscoverHome(uuid)
-    // 设置页 / 外部链接可用 ?tab=cloudFavorite 直接落到云端收藏 tab
-    const requested = String(route.query.tab ?? '')
+    // 设置页「查看云端收藏」可用 ?tab=cloudFavorite 直接落到云端收藏 tab
+    const requested = String(props.initialTab ?? '')
     const match = home.value.tabs.find(tab => tab.id === requested)
       ?? (requested === 'cloudFavorite' ? home.value.tabs.find(tab => tab.id.startsWith('cloudFavorite:')) : undefined)
     activeTab.value = match?.id ?? home.value.tabs[0]?.id ?? ''
@@ -236,16 +239,16 @@ function resetFilter() {
   void applyFilter()
 }
 
-function goBack() {
-  if (overlay.value) { overlay.value = null; functionPage.value = null; sceneItems.value = []; return }
-  router.push('/comics')
+function closeOverlay() {
+  overlay.value = null
+  functionPage.value = null
+  sceneItems.value = []
 }
 
 function openComic(item: DiscoverItem) {
   const id = comicIdOf(item)
   if (!id) return
-  const query = { comicId: id, ...(item.title ? { title: item.title } : {}) }
-  void router.push({ path: `/comics/source/${encodeURIComponent(uuid)}`, query })
+  emit('openComic', { comicId: id, title: item.title })
 }
 
 /** 执行 Breeze 的 PluginAction, 不支持的入口给明确提示而不是静默无反应 */
@@ -256,14 +259,12 @@ function runAction(action?: PluginAction) {
     case 'openComicInfo':
     case 'openComicDetail': {
       const id = String(payload.comicId ?? '')
-      if (id) void router.push({ path: `/comics/source/${encodeURIComponent(uuid)}`, query: { comicId: id } })
+      if (id) emit('openComic', { comicId: id })
       else toast(t('comics.discoverUnsupported'), 'error')
       break
     }
     case 'openSearch': {
-      const keyword = String(payload.keyword ?? '')
-      if (keyword) void router.push({ path: `/comics/source/${encodeURIComponent(uuid)}`, query: { keyword } })
-      else void router.push(`/comics/source/${encodeURIComponent(uuid)}`)
+      emit('openSearch', { keyword: String(payload.keyword ?? '') })
       break
     }
     case 'openComicList': {
@@ -303,29 +304,30 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 
 <template>
   <div class="comic-discover">
-    <header class="toolbar">
-      <button class="btn btn-ghost back-btn" @click="goBack">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>
-        {{ overlay ? t('common.back') : t('comics.discoverBack') }}
-      </button>
-      <div class="heading"><h1>{{ heading }}</h1></div>
-      <div class="spacer" />
-      <button v-if="currentScene && filters.length" class="btn" @click="showFilter = true">{{ t('comics.discoverFilter') }}</button>
-      <button class="btn" @click="goToSettings">{{ t('comics.pluginSettings') }}</button>
-      <button class="btn" :disabled="loading" @click="overlay ? reloadView() : loadHome()">
-        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
-        {{ t('comics.discoverRefresh') }}
-      </button>
-    </header>
-
     <p v-if="!plugin" class="error-text">{{ t('comics.sourceMissing') }}</p>
     <template v-else>
-      <div v-if="home?.tabs.length && !overlay" class="tab-row" role="tablist">
-        <button
-          v-for="tab in home.tabs" :key="tab.id" type="button" role="tab"
-          class="tab" :class="{ active: activeTab === tab.id }" :aria-selected="activeTab === tab.id"
-          @click="activeTab = tab.id"
-        >{{ tab.title }}</button>
+      <!-- tab 与操作按钮同一行; 插件设置由父页面顶栏提供, 这里不重复 -->
+      <div class="browse-bar">
+        <div v-if="home?.tabs.length && !overlay" class="tab-row" role="tablist">
+          <button
+            v-for="tab in home.tabs" :key="tab.id" type="button" role="tab"
+            class="tab" :class="{ active: activeTab === tab.id }" :aria-selected="activeTab === tab.id"
+            @click="activeTab = tab.id"
+          >{{ tab.title }}</button>
+        </div>
+        <span v-if="overlay" class="overlay-title">{{ heading }}</span>
+        <div class="spacer" />
+        <div class="panel-tools">
+          <button v-if="overlay" class="btn btn-ghost back-btn" @click="closeOverlay">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>
+            {{ t('common.back') }}
+          </button>
+          <button v-if="currentScene && filters.length" class="btn" @click="showFilter = true">{{ t('comics.discoverFilter') }}</button>
+          <button class="btn" :disabled="loading" @click="overlay ? reloadView() : loadHome()">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
+            {{ t('comics.discoverRefresh') }}
+          </button>
+        </div>
       </div>
 
       <p v-if="loading" class="hint loading-hint">{{ t('comics.discoverLoading') }}</p>
@@ -427,7 +429,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
         <p class="empty-title">{{ t('comics.discoverEmpty') }}</p>
         <p class="hint">{{ t('comics.discoverEmptyHint') }}</p>
         <div class="empty-actions">
-          <button class="btn btn-primary" @click="router.push(`/comics/source/${encodeURIComponent(uuid)}`)">{{ t('comics.openSource') }}</button>
+          <button class="btn btn-primary" @click="emit('openSearch', { keyword: '' })">{{ t('comics.searchOnline') }}</button>
         </div>
       </div>
     </template>
@@ -462,24 +464,14 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 </template>
 
 <style scoped>
-.comic-discover {
-  min-height: 100%;
-  max-width: calc(var(--page-max) + 2 * var(--page-x));
-  margin: 0 auto;
-  padding: 0 var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
-  position: relative;
-}
-.toolbar {
-  position: sticky; top: 0; z-index: 20;
+.comic-discover { position: relative; }
+.browse-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin: 0 calc(-1 * var(--page-x)) 12px;
-  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 16px var(--page-x);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border-bottom: 1px solid transparent;
+  border-bottom: 1px solid var(--line); margin-bottom: 16px;
 }
-.heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.toolbar h1 { font-size: var(--page-title); font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+.browse-bar .tab-row { border-bottom: 0; margin-bottom: 0; flex: 1; }
+.panel-tools { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
+.overlay-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spacer { flex: 1; }
 .back-btn { padding-left: 8px; }
 .hint { color: var(--text-3); font-size: 13px; line-height: 1.6; margin: 0; }

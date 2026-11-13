@@ -8,6 +8,7 @@
  *   getCapabilitiesBundle → clear_session 等动作
  *   getPluginCloudFavoritePagesBundle → 云端收藏 tab (在 discover.ts 合并)
  */
+import { t } from '../../i18n'
 import { withPlugin } from './index'
 import * as registry from './registry'
 
@@ -122,12 +123,64 @@ export async function loadLoginBundle(uuid: string): Promise<PluginLoginBundle |
   })
 }
 
-/** 登录表单提交; 插件内部会自己保存会话, 宿主不接触账号密码之外的逻辑 */
+/**
+ * 登录表单提交; 插件内部会自己保存会话, 宿主不接触账号密码之外的逻辑。
+ * 部分插件失败时只返回 {ok:false,message} 而不抛异常, 这里统一校验, 避免误报「登录成功」。
+ */
 export async function submitLogin(uuid: string, fnPath: string, values: Record<string, unknown>): Promise<unknown> {
-  return withPlugin(uuid, host => host.call(fnPath, { ...values }, { timeoutMs: 60_000 }))
+  return withPlugin(uuid, async host => {
+    const result = await host.call(fnPath, { ...values }, { timeoutMs: 60_000 })
+    const root = obj(result)
+    const data = obj(root.data)
+    const message = text(root.message)
+    const failure = text(root.error) || text(data.error)
+    if (
+      root.ok === false || root.success === false ||
+      data.ok === false || data.success === false || failure
+    ) {
+      throw new Error(failure || message || t('comics.loginFailed'))
+    }
+    if (message && /失败|错误|无效|不正确|invalid|failed|incorrect/i.test(message)) {
+      throw new Error(message)
+    }
+    return result
+  })
 }
 
-/** 用户信息; 未登录时插件抛 unauthorized, UI 层据此显示登录入口 */
+/**
+ * Breeze 新版 getUserInfoBundle 给的是「渲染型」数据, 不含 username/nickname:
+ *   { data: { title, avatar:{url}, lines:['用户名 (硬币: x)','Lv.x …','经验值: x/y'],
+ *             extern:{uid} } }
+ * 宿主把它摊平成设置页能直接读的字段, 同时保留 lines 原样展示。
+ * 老插件的平铺字段 / data.userInfo 不做加工, 保持原样。
+ */
+export function renderedUserInfo(data: Record<string, unknown>): Record<string, unknown> {
+  if (!(data.title || data.lines || data.avatar || data.extern)) return {}
+  const out: Record<string, unknown> = {}
+  const avatar = obj(data.avatar)
+  const avatarUrl = text(avatar.url) || text(avatar.path) || text(data.avatar)
+  const lines = arr(data.lines).map(text).filter(Boolean)
+  const joined = lines.join(' · ')
+  const uid = text(obj(data.extern).uid)
+  const first = lines[0] ?? ''
+  const name = text(data.username) || text(data.nickname) || text(data.name)
+    || first.replace(/\s*[（(].*$/, '').trim()
+  const coin = /硬币[:：]\s*([^)）\s·]+)/.exec(joined)?.[1]
+  const level = /(Lv\.?\s*\d+[^·]*)/i.exec(joined)?.[1]?.trim()
+  const exp = /经验值[:：]\s*([\d/]+)/.exec(joined)?.[1]
+  if (avatarUrl) { out.avatar = avatarUrl; out.photo = avatarUrl }
+  if (lines.length) out.lines = lines
+  if (uid) out.uid = uid
+  if (name) { out.username = name; out.name = name }
+  if (coin) out.coin = coin
+  if (level) out.levelName = level
+  if (exp) out.exp = exp
+  // 渲染型结构本身就是「已登录」的凭据, 不能再用有没有 username 判断
+  if (name || lines.length || avatarUrl || uid) out.loggedIn = true
+  return out
+}
+
+/** 用户信息; 未登录时插件抛 unauthorized/普通错误, UI 层 catch 后显示登录入口 */
 export async function loadUserInfo(uuid: string): Promise<Record<string, unknown>> {
   return withPlugin(uuid, async host => {
     if (!host.hasFn('getUserInfoBundle')) return {}
@@ -136,7 +189,8 @@ export async function loadUserInfo(uuid: string): Promise<Record<string, unknown
     const { userInfo, ...rest } = obj(root.data)
     // 插件有两种写法: data.userInfo 嵌套对象 / 字段直接平铺在 data 上。
     // 合并时要把 userInfo 本身摘掉, 否则设置页会把整个对象当字段渲染成 [object Object]。
-    return { ...obj(userInfo), ...rest }
+    const base = { ...obj(userInfo), ...rest }
+    return { ...base, ...renderedUserInfo(base) }
   })
 }
 

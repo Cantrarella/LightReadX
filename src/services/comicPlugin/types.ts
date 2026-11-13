@@ -65,13 +65,28 @@ export interface ComicChapter {
   [key: string]: unknown
 }
 
+/** 元信息一项 (Breeze 的 onTap 常带 openSearch, 点 chip 可触发站内搜索) */
+export interface ComicMetaValue {
+  name?: string
+  onTap?: { type?: string; payload?: Record<string, unknown>; [key: string]: unknown }
+  [key: string]: unknown
+}
+
+export interface ComicMetaGroup {
+  type?: string
+  name?: string
+  value?: ComicMetaValue[]
+  [key: string]: unknown
+}
+
 export interface ComicInfo {
   id: string
   title: string
   description?: string
   cover?: { url?: string; [key: string]: unknown }
   creator?: { name?: string; [key: string]: unknown }
-  titleMeta?: Array<{ name?: string; [key: string]: unknown }>
+  titleMeta?: ComicMetaValue[]
+  metadata?: ComicMetaGroup[]
   [key: string]: unknown
 }
 
@@ -84,6 +99,10 @@ export interface ComicDetailResult {
       comicInfo?: ComicInfo
       eps?: ComicChapter[]
       allowDownload?: boolean
+      recommend?: ComicSearchItem[]
+      totalViews?: number
+      totalLikes?: number
+      totalComments?: number
       [key: string]: unknown
     }
     eps?: ComicChapter[]

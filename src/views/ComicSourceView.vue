@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * 漫画源: 搜索 → 详情/章节 → 在线阅读 / 下载入库。
+ * 漫画源唯一入口: 浏览(插件首页 tab / 云收藏) → 搜索 → Breeze 风格详情
+ * → 在线阅读 / 章节下载入库。原「发现」页已并入这里的浏览面板。
  * UI 沿用藏书页与漫画页的卡片、按钮、工具栏语言, 不另起一套视觉。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -15,8 +16,10 @@ import {
 import {
   bytesToObjectUrl, cancelDownload, downloadChapterAsCbz, type DownloadProgress,
 } from '../services/comicPlugin/download'
-import { normalizeChapter } from '../services/comicPlugin/normalize'
-import { asSearchItem, loadHomeItems } from '../services/comicPlugin/discover'
+import {
+  normalizeChapter, type DetailChip, type DetailMetaGroup,
+} from '../services/comicPlugin/normalize'
+import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
 import type {
   ComicChapter, ComicChapterResult, ComicPaging, ComicSearchItem, ComicInfo, ComicPage,
 } from '../services/comicPlugin/types'
@@ -26,17 +29,14 @@ const router = useRouter()
 const library = useLibrary()
 const uuid = String(route.params.uuid ?? '')
 const plugin = getPlugin(uuid)
+/** 设置页「查看云端收藏」会带 ?tab=cloudFavorite 落到对应 tab */
+const initialTab = String(route.query.tab ?? '')
 
-const view = ref<'search' | 'detail'>('search')
+const view = ref<'browse' | 'search' | 'detail'>('browse')
 const keyword = ref('')
+const searchInput = ref<HTMLInputElement>()
 const page = ref(1)
 const items = ref<ComicSearchItem[]>([])
-const showingHome = ref(true)
-const homeItems = ref<ComicSearchItem[]>([])
-const homeTitle = ref('')
-const homeLoading = ref(false)
-const homeError = ref('')
-const displayItems = computed(() => showingHome.value ? homeItems.value : items.value)
 const paging = ref<ComicPaging | undefined>()
 const searching = ref(false)
 const searchError = ref('')
@@ -45,6 +45,10 @@ const covers = reactive<Record<string, string>>({})
 const comicId = ref('')
 const info = ref<ComicInfo | undefined>()
 const chapters = ref<ComicChapter[]>([])
+const titleMeta = ref<DetailChip[]>([])
+const metadata = ref<DetailMetaGroup[]>([])
+const recommend = ref<ComicSearchItem[]>([])
+const stats = reactive({ views: 0, likes: 0, comments: 0 })
 const loadingDetail = ref(false)
 const detailError = ref('')
 const downloads = reactive<Record<string, DownloadProgress>>({})
@@ -83,26 +87,10 @@ async function loadCovers(list: ComicSearchItem[]) {
   await Promise.all(Array.from({ length: 4 }, () => worker()))
 }
 
-/** 进入漫画源默认拉插件首页推荐, 不再是空白搜索页 */
-async function loadHome() {
-  homeLoading.value = true
-  homeError.value = ''
-  try {
-    const result = await loadHomeItems(uuid)
-    homeItems.value = result.items.map(asSearchItem)
-    homeTitle.value = result.title
-    void loadCovers(homeItems.value)
-  } catch (e) {
-    homeError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    homeLoading.value = false
-  }
-}
-
 async function doSearch(reset = true) {
   const kw = keyword.value.trim()
   if (!kw || searching.value) return
-  showingHome.value = false
+  view.value = 'search'
   if (reset) { page.value = 1; items.value = []; paging.value = undefined }
   searching.value = true
   searchError.value = ''
@@ -129,13 +117,24 @@ async function openDetail(item: ComicSearchItem) {
   comicId.value = item.id
   info.value = undefined
   chapters.value = []
+  titleMeta.value = []
+  metadata.value = []
+  recommend.value = []
+  stats.views = stats.likes = stats.comments = 0
   detailError.value = ''
   loadingDetail.value = true
   try {
     const result = await detail(uuid, item.id)
     info.value = result.info
     chapters.value = [...result.chapters].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    const infoCover = coverUrl(result.info?.cover)
+    titleMeta.value = result.titleMeta
+    metadata.value = result.metadata
+    recommend.value = result.recommend
+    stats.views = result.totalViews
+    stats.likes = result.totalLikes
+    stats.comments = result.totalComments
+    // 从列表 / 云收藏点进来时卡片可能没带封面, 详情的 cover.url 才是准的
+    const infoCover = coverUrl(result.info?.cover) || coverUrl(item.cover)
     if (infoCover && !covers[item.id]) {
       const host = await openPlugin(uuid)
       try {
@@ -143,6 +142,7 @@ async function openDetail(item: ComicSearchItem) {
         if (bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, infoCover)
       } catch { /* 忽略封面失败 */ } finally { host.dispose() }
     }
+    if (recommend.value.length) void loadCovers(recommend.value)
   } catch (e: any) {
     detailError.value = e?.message ?? String(e)
   } finally {
@@ -150,16 +150,40 @@ async function openDetail(item: ComicSearchItem) {
   }
 }
 
-function backToSearch() {
-  view.value = 'search'
+function backToBrowse() {
+  view.value = 'browse'
   closeReader()
-  // 从发现页带参数进来时, 返回后清掉 query, 避免刷新又跳回详情
-  if (route.query.comicId || route.query.keyword) {
+  // 从设置页 / 外部链接带参数进来时, 返回后清掉 query, 避免刷新又跳回详情
+  if (route.query.comicId || route.query.keyword || route.query.tab) {
     void router.replace({ path: route.path })
   }
 }
 
-/** 发现页 / 外部链接可带 comicId 直达详情, 或带 keyword 自动搜索 */
+/** 浏览面板点漫画 → 详情; 点搜索词 / 空态引导 → 搜索视图 */
+function onPanelComic(payload: { comicId: string; title?: string }) {
+  void openDetail({ id: payload.comicId, title: payload.title ?? '' } as ComicSearchItem)
+}
+function onPanelSearch(payload: { keyword: string }) {
+  keyword.value = payload.keyword
+  view.value = 'search'
+  if (payload.keyword.trim()) void doSearch()
+  else searchInput.value?.focus()
+}
+/** 详情里的作者 / 标签 chip 触发站内搜索 (Breeze 的 onTap.openSearch) */
+function onChipSearch(chip: DetailChip) {
+  if (!chip.keyword) return
+  keyword.value = chip.keyword
+  void doSearch()
+}
+function startReading() {
+  const first = chapters.value[0]
+  if (first) void openReader(first)
+}
+function goSettings() {
+  void router.push(`/comics/settings/${encodeURIComponent(uuid)}`)
+}
+
+/** 外部链接可带 comicId 直达详情 / keyword 自动搜索 / tab 定位云端收藏 */
 onMounted(() => {
   if (!plugin) return
   const comicIdParam = String(route.query.comicId ?? '')
@@ -171,9 +195,8 @@ onMounted(() => {
   if (keywordParam) {
     keyword.value = keywordParam
     void doSearch()
-    return
   }
-  void loadHome()
+  // 其余情况保持 browse, 由 ComicDiscoverPanel 自己拉首页 tab
 })
 
 function taskKey(chapter: ComicChapter) {
@@ -316,24 +339,32 @@ function switchChapter(offset: number) {
         <h1>{{ plugin?.name ?? t('comics.sources') }}</h1>
       </div>
       <div class="spacer" />
-      <div v-if="view === 'search'" class="search-field">
+      <div v-if="view !== 'detail'" class="search-field">
         <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <input v-model="keyword" class="search" type="search" :placeholder="t('comics.searchOnline')" @keyup.enter="doSearch()" />
+        <input ref="searchInput" v-model="keyword" class="search" type="search" :placeholder="t('comics.searchOnline')" @keyup.enter="doSearch()" />
       </div>
-      <button v-if="view === 'search'" class="btn btn-primary" :disabled="searching || !keyword.trim()" @click="doSearch()">{{ t('comics.search') }}</button>
-      <button v-else class="btn" @click="backToSearch">{{ t('comics.backToSearch') }}</button>
+      <button v-if="view !== 'detail'" class="btn btn-primary" :disabled="searching || !keyword.trim()" @click="doSearch()">{{ t('comics.search') }}</button>
+      <button v-if="view !== 'browse'" class="btn" @click="backToBrowse">{{ t('comics.backToBrowse') }}</button>
+      <button class="btn" @click="goSettings">{{ t('comics.pluginSettings') }}</button>
     </header>
 
     <p v-if="!plugin" class="error-text">{{ t('comics.sourceMissing') }}</p>
 
+    <!-- 浏览: 插件首页 tab / 云收藏 / 功能页 (原「发现」页并入, 只留一个入口) -->
+    <div v-if="plugin" v-show="view === 'browse'" class="browse-panel">
+      <ComicDiscoverPanel
+        :uuid="uuid" :initial-tab="initialTab"
+        @open-comic="onPanelComic" @open-search="onPanelSearch"
+      />
+    </div>
+
     <!-- 搜索结果 -->
-    <template v-else-if="view === 'search'">
+    <template v-if="plugin && view === 'search'">
+      <h2 class="section-title">{{ t('comics.searchResults') }}</h2>
       <p v-if="searchError" class="error-text">{{ searchError }}</p>
-      <p v-if="showingHome && homeError" class="error-text">{{ homeError }}</p>
-      <p v-if="searching || (showingHome && homeLoading)" class="hint loading-hint">{{ showingHome ? t('comics.homeLoading') : t('comics.searching') }}</p>
-      <h2 v-if="showingHome && homeTitle" class="section-title">{{ homeTitle }}</h2>
-      <div v-if="displayItems.length" class="result-grid">
-        <button v-for="item in displayItems" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
+      <p v-if="searching" class="hint loading-hint">{{ t('comics.searching') }}</p>
+      <div v-if="items.length" class="result-grid">
+        <button v-for="item in items" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
           <div class="result-cover">
             <img v-if="covers[item.id]" :src="covers[item.id]" alt="" loading="lazy" />
             <div v-else class="cover-placeholder" aria-hidden="true">
@@ -344,20 +375,20 @@ function switchChapter(offset: number) {
           <div class="result-subtitle">{{ item.subtitle || item.updatedAt || '' }}</div>
         </button>
       </div>
-      <div v-else-if="!searching && !homeLoading && !searchError" class="empty">
+      <div v-else-if="!searching && !searchError" class="empty">
         <div class="empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4" stroke-linecap="round"/></svg>
         </div>
-        <p class="empty-title">{{ keyword ? t('comics.noSearchResult') : t('comics.homeEmpty') }}</p>
+        <p class="empty-title">{{ t('comics.noSearchResult') }}</p>
         <p class="hint">{{ t('comics.searchHint') }}</p>
       </div>
-      <div v-if="!showingHome && paging && page < paging.pages" class="load-more">
+      <div v-if="paging && page < paging.pages" class="load-more">
         <button class="btn" :disabled="searching" @click="loadMore">{{ t('comics.loadMore') }}</button>
       </div>
     </template>
 
-    <!-- 详情与章节 -->
-    <template v-else>
+    <!-- Breeze 风格详情: 封面 / 元信息 / 分组标签 / 章节 / 相关推荐; 不含点赞收藏按钮 -->
+    <template v-if="plugin && view === 'detail'">
       <p v-if="detailError" class="error-text">{{ detailError }}</p>
       <p v-if="loadingDetail" class="hint loading-hint">{{ t('comics.loadingDetail') }}</p>
       <div v-if="info" class="detail-head">
@@ -369,12 +400,44 @@ function switchChapter(offset: number) {
         </div>
         <div class="detail-meta">
           <h2>{{ info.title }}</h2>
-          <p class="detail-creator">{{ info.creator?.name || '' }}</p>
-          <p class="detail-desc">{{ info.description || '' }}</p>
-          <p class="hint">{{ t('comics.chapterCount', { count: chapters.length }) }}</p>
+          <p v-if="info.creator?.name" class="detail-creator">{{ info.creator.name }}</p>
+          <!-- titleMeta: 浏览 / 更新时间 / 章节数 / 总页数 / 车号 -->
+          <div v-if="titleMeta.length" class="title-meta">
+            <button
+              v-for="(chip, i) in titleMeta" :key="`tm-${i}`" type="button"
+              class="meta-pill" :class="{ clickable: !!chip.keyword }"
+              :disabled="!chip.keyword" @click="onChipSearch(chip)"
+            >{{ chip.label }}</button>
+          </div>
+          <!-- 只展示数字, 不摆点赞 / 评论 / 收藏按钮 -->
+          <div class="detail-stats">
+            <span v-if="stats.likes">{{ t('comics.totalLikes') }} {{ stats.likes }}</span>
+            <span v-if="stats.comments">{{ t('comics.totalComments') }} {{ stats.comments }}</span>
+            <span v-if="stats.views">{{ t('comics.totalViews') }} {{ stats.views }}</span>
+          </div>
+          <p v-if="info.description" class="detail-desc">{{ info.description }}</p>
+          <div class="detail-start">
+            <button class="btn btn-primary" :disabled="!chapters.length" @click="startReading">{{ t('comics.startReading') }}</button>
+            <span class="hint">{{ t('comics.chapterCount', { count: chapters.length }) }}</span>
+          </div>
         </div>
       </div>
 
+      <!-- metadata: 作者 / 标签 / 作品 / 角色, chip 可触发站内搜索 -->
+      <section v-if="metadata.length" class="meta-groups">
+        <div v-for="group in metadata" :key="group.key" class="meta-group">
+          <span class="meta-group-name">{{ group.name }}</span>
+          <div class="chip-row">
+            <button
+              v-for="(chip, i) in group.chips" :key="`${group.key}-${i}`" type="button"
+              class="chip" :class="{ clickable: !!chip.keyword }"
+              :disabled="!chip.keyword" @click="onChipSearch(chip)"
+            >{{ chip.label }}</button>
+          </div>
+        </div>
+      </section>
+
+      <h2 class="section-title">{{ t('comics.detailChapters') }}</h2>
       <div v-if="chapters.length" class="chapter-list">
         <div v-for="chapter in chapters" :key="chapterRequestId(chapter)" class="chapter-row">
           <span class="chapter-order">{{ chapter.order ?? '' }}</span>
@@ -390,6 +453,22 @@ function switchChapter(offset: number) {
       <div v-else-if="!loadingDetail && !detailError" class="empty">
         <p class="empty-title">{{ t('comics.noChapters') }}</p>
       </div>
+
+      <template v-if="recommend.length">
+        <h2 class="section-title">{{ t('comics.detailRecommend') }}</h2>
+        <div class="result-grid">
+          <button v-for="item in recommend" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
+            <div class="result-cover">
+              <img v-if="covers[item.id]" :src="covers[item.id]" alt="" loading="lazy" />
+              <div v-else class="cover-placeholder" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+              </div>
+            </div>
+            <div class="result-title">{{ item.title }}</div>
+            <div class="result-subtitle">{{ item.subtitle || item.updatedAt || '' }}</div>
+          </button>
+        </div>
+      </template>
     </template>
 
     <!-- 在线阅读 -->
@@ -483,12 +562,35 @@ function switchChapter(offset: number) {
 .empty-title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
 .load-more { display: flex; justify-content: center; padding: 22px 0; }
 
-.detail-head { display: flex; gap: 20px; margin: 8px 0 22px; }
-.detail-cover { width: 132px; flex: none; }
-.detail-meta { min-width: 0; }
-.detail-meta h2 { font-size: 20px; margin: 0 0 6px; }
+.browse-panel { margin-top: 4px; }
+.detail-head { display: flex; gap: 22px; margin: 8px 0 20px; }
+.detail-cover { width: 176px; flex: none; }
+.detail-meta { min-width: 0; flex: 1; }
+.detail-meta h2 { font-size: 22px; margin: 0 0 8px; }
 .detail-creator { font-size: 13px; color: var(--text-3); margin: 0 0 10px; }
-.detail-desc { font-size: 13px; line-height: 1.7; color: var(--text-2); margin: 0 0 10px; max-height: 6.8em; overflow: hidden; }
+.detail-desc { font-size: 13px; line-height: 1.7; color: var(--text-2); margin: 0 0 10px; max-height: 8.5em; overflow: hidden; }
+.title-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.meta-pill {
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text-2);
+  border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: default;
+}
+.meta-pill.clickable { cursor: pointer; }
+.meta-pill.clickable:hover { color: var(--text); border-color: var(--accent, currentColor); }
+.detail-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); margin: 0 0 10px; }
+.detail-start { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.meta-groups {
+  border: 1px solid var(--line); border-radius: var(--radius-lg, 14px);
+  padding: 12px 16px; margin: 0 0 20px; background: var(--surface-1);
+}
+.meta-group { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; }
+.meta-group-name { flex: none; width: 48px; font-size: 12px; color: var(--text-3); padding-top: 6px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text-2);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px; cursor: default;
+}
+.chip.clickable { cursor: pointer; }
+.chip.clickable:hover { color: var(--text); border-color: var(--accent, currentColor); }
 .chapter-list { border: 1px solid var(--line); border-radius: var(--radius-lg, 14px); overflow: hidden; }
 .chapter-row {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px;

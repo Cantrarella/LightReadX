@@ -10,7 +10,7 @@ import { toast } from '../services/toast'
 import { askConfirm, deleteConfirmOptions } from '../services/confirm'
 import { openExternalLink } from '../services/transfer'
 import {
-  addSubscription, installStoreEntry, listSubscriptions, loadStore,
+  addSubscription, installStoreEntry, listSubscriptions, loadCachedStore, loadStore,
   removeSubscription, setSubscriptionEnabled, storeState,
   type StoreEntry, type StoreSubscription,
 } from '../services/comicPlugin/store'
@@ -34,6 +34,9 @@ const brokenIcons = ref<Record<string, boolean>>({})
 
 onMounted(() => {
   subs.value = listSubscriptions()
+  // 先把上次索引渲染出来, 桌面 WebView 原生请求即使挂住也不会一直停在「正在拉取…」
+  const cached = loadCachedStore()
+  if (cached.length) { entries.value = cached; fromCache.value = true }
   void refresh(false)
 })
 
@@ -44,9 +47,10 @@ async function refresh(force: boolean) {
   errors.value = []
   try {
     const result = await loadStore(force)
-    entries.value = result.entries
+    // 全部源都失败时保留已有列表, 只显示错误 + 重试, 不清空页面
+    if (result.entries.length) entries.value = result.entries
     errors.value = result.errors
-    fromCache.value = result.fromCache
+    fromCache.value = result.fromCache || !result.entries.length
     subs.value = listSubscriptions()
   } catch (e: any) {
     errors.value = [e?.message ?? String(e)]
@@ -150,7 +154,10 @@ function openHome(entry: StoreEntry) {
 
     <p class="store-hint">{{ t('comics.storeHint') }}</p>
     <p v-if="loading" class="hint loading-hint">{{ loadingText }}</p>
-    <p v-if="errors.length" class="error-text">{{ t('comics.storeLoadFailed') }}：{{ errors.join('；') }}</p>
+    <p v-if="errors.length" class="error-text">
+      {{ t('comics.storeLoadFailed') }}：{{ errors.join('；') }}
+      <button class="btn btn-ghost" :disabled="loading" @click="refresh(true)">{{ t('comics.storeRetry') }}</button>
+    </p>
     <p v-if="fromCache && !loading" class="hint">{{ t('comics.storeFromCache') }}</p>
 
     <div v-if="sources.length > 1" class="filter-row">

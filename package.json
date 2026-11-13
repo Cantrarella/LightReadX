@@ -11,6 +11,8 @@
     "ios:ipa": "node scripts/build-ios.mjs --ipa",
     "test:comic-plugin": "node scripts/test-comic-plugin.mjs",
     "test:comic-store": "node scripts/test-comic-store.mjs",
+    "test:comic-store-net": "node scripts/test-comic-store-net.mjs",
+    "test:comic-detail": "node scripts/test-comic-detail.mjs",
     "test:comic-account": "node scripts/test-comic-account.mjs",
     "test:book-sources": "node --experimental-strip-types --test scripts/test-catalog-errors.mjs scripts/test-open-library.mjs scripts/test-internet-archive.mjs scripts/test-philosophy-archive.mjs scripts/test-web-book-sources.mjs scripts/test-opds-download.mjs scripts/test-github-books.mjs scripts/test-book-query.mjs scripts/test-wendian.mjs",
     "test:archive": "node scripts/test-library-archive.mjs",

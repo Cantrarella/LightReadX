@@ -149,11 +149,51 @@ try {
   assert.equal(globalThis.__accountTest.calls[0].opts.timeoutMs, 60_000, '登录允许慢速网络')
   assert.deepEqual(globalThis.__accountTest.calls[0].params, { account: 'qa-user', password: 'pw123' })
 
+  // ---- 4b. 插件返回失败标记但不抛异常时, 不能误报「登录成功」 ----
+  reset({ loginWithPassword: async () => ({ ok: false, message: '账号或密码错误' }) })
+  await assert.rejects(
+    () => account.submitLogin('u', 'loginWithPassword', { account: 'x', password: 'y' }),
+    /账号或密码错误/,
+  )
+  reset({ loginWithPassword: async () => ({ data: { error: '验证码不正确' } }) })
+  await assert.rejects(
+    () => account.submitLogin('u', 'loginWithPassword', { account: 'x' }),
+    /验证码不正确/,
+  )
+  reset({ loginWithPassword: async () => ({ message: 'Login failed' }) })
+  await assert.rejects(
+    () => account.submitLogin('u', 'loginWithPassword', { account: 'x' }),
+    /Login failed/,
+  )
+
   // ---- 5. 用户信息: data.userInfo 与 data 平铺都要兼容 ----
   reset({ getUserInfoBundle: async () => ({ data: { userInfo: { username: 'qa-user' }, coin: '88' } }) })
   assert.deepEqual(await account.loadUserInfo('u'), { username: 'qa-user', coin: '88' })
   reset({})
   assert.deepEqual(await account.loadUserInfo('u'), {}, '插件无用户信息接口时返回空对象')
+
+  // ---- 5b. Breeze 渲染型 userInfo (禁漫 getUserInfoBundle 的真实形状) ----
+  // 它没有 username 字段, 旧实现会一直判定「尚未登录」
+  reset({ getUserInfoBundle: async () => ({
+    source: 'jm', scheme: { type: 'userInfo' },
+    data: {
+      title: '账号',
+      avatar: { id: '7', url: 'https://img.test/a.jpg', name: 'a.jpg', path: 'a.jpg', extern: {} },
+      lines: ['qa-user (硬币: 88)', 'Lv.3 漫画家', '经验值: 120/300'],
+      extern: { uid: '7' },
+    },
+  }) })
+  const rendered = await account.loadUserInfo('u')
+  assert.equal(rendered.loggedIn, true, '渲染型结构本身就是已登录凭据')
+  assert.equal(rendered.username, 'qa-user', '从 lines[0] 提取用户名')
+  assert.equal(rendered.avatar, 'https://img.test/a.jpg', '头像要摊平成 URL 字符串')
+  assert.equal(rendered.photo, 'https://img.test/a.jpg')
+  assert.equal(rendered.coin, '88')
+  assert.equal(rendered.levelName, 'Lv.3 漫画家')
+  assert.equal(rendered.exp, '120/300')
+  assert.equal(rendered.uid, '7')
+  assert.deepEqual(rendered.lines, ['qa-user (硬币: 88)', 'Lv.3 漫画家', '经验值: 120/300'])
+  assert.deepEqual(account.renderedUserInfo({}), {}, '平铺字段不该被加工')
 
   // ---- 6. 能力清单: 缺字段的动作过滤, 插件抛错时静默降级 ----
   reset({
@@ -188,7 +228,7 @@ try {
   await account.saveSettingValue('u', 'qa.token', 'abc')
   assert.deepEqual(globalThis.__accountTest.saved[0], ['u', 'qa.token', 'abc'])
 
-  console.log('test-comic-account: OK (settings / login fnPath 兜底 / 提交 / userInfo / capabilities / 保存回落)')
+  console.log('test-comic-account: OK (settings / 登录 fnPath 兜底 / 提交失败校验 / 渲染型 userInfo 登录态 / capabilities / 保存回落)')
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

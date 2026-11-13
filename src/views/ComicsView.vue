@@ -136,10 +136,6 @@ function openSource(plugin: InstalledComicPlugin) {
   router.push(`/comics/source/${encodeURIComponent(plugin.uuid)}`)
 }
 
-function openDiscover(plugin: InstalledComicPlugin) {
-  router.push(`/comics/discover/${encodeURIComponent(plugin.uuid)}`)
-}
-
 function openSettings(plugin: InstalledComicPlugin) {
   router.push(`/comics/settings/${encodeURIComponent(plugin.uuid)}`)
 }
@@ -234,7 +230,6 @@ function openStore() {
           </div>
           <div class="source-actions">
             <button class="btn btn-primary" :disabled="!plugin.enabled" @click="openSource(plugin)">{{ t('comics.openSource') }}</button>
-            <button class="btn" :disabled="!plugin.enabled" @click="openDiscover(plugin)">{{ t('comics.discover') }}</button>
             <button class="btn" @click="openSettings(plugin)">{{ t('comics.pluginSettings') }}</button>
             <button class="btn" @click="togglePlugin(plugin)">{{ plugin.enabled ? t('comics.disable') : t('comics.enable') }}</button>
             <button class="btn btn-ghost" @click="uninstall(plugin)">{{ t('comics.uninstall') }}</button>
