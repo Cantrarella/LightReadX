@@ -12,6 +12,7 @@ import {
   safeFileName, type DownloadPhase,
 } from './download'
 import { cacheDropTask } from './downloadCache'
+import { notifyDownloadDone } from './notify'
 import { chapterKey, chapterRequestId } from './normalize'
 import { getStorage } from '../../storage'
 import type { BookMeta } from '../../storage/types'
@@ -125,6 +126,37 @@ export const activeCount = computed(() => activeTasks.value.length)
 export const failedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'failed' || t.status === 'interrupted'))
 export const finishedTasks = computed(() => downloadState.tasks.filter(t => t.status === 'done'))
 
+/** 队列总进度: 供下载页顶部展示「还剩几章 / 整体进度」 */
+export const queueSummary = computed(() => {
+  const tasks = downloadState.tasks
+  const running = tasks.filter(t => t.status === 'running')
+  const queued = tasks.filter(t => t.status === 'queued')
+  const paused = tasks.filter(t => t.status === 'paused')
+  const done = tasks.filter(t => t.status === 'done')
+  const failed = tasks.filter(t => t.status === 'failed' || t.status === 'interrupted')
+
+  // 整体完成度: 已完成章数 / 所有任务章数 (没任务的空队列记 0)
+  const total = tasks.length
+  const remaining = queued.length + paused.length
+  const activeChapter = running.length
+
+  // 当前正在跑的任务里, 页级进度 (取第一个 running 的 loaded/total)
+  const cur = running[0]
+  const currentLoaded = cur?.loaded ?? 0
+  const currentTotal = cur?.total ?? 0
+
+  return {
+    total,
+    remaining,
+    activeChapter,
+    done: done.length,
+    failed: failed.length,
+    currentLoaded,
+    currentTotal,
+    percent: total ? Math.round((done.length / total) * 100) : 0,
+  }
+})
+
 function patch(id: string, changes: Partial<DownloadTask>) {
   const task = downloadState.tasks.find(t => t.id === id)
   if (!task) return
@@ -236,6 +268,12 @@ async function run(task: DownloadTask) {
       })
       // 完成, 清掉断点缓存
       void cacheDropTask(task.id)
+      // 完成通知 (队列里还有其他待跑的就提示「继续」, 全跑完就提示「全部完成」)
+      const stillActive = downloadState.tasks.some(t => t.status === 'queued' || t.status === 'running' || t.status === 'paused')
+      void notifyDownloadDone(
+        task.comicTitle,
+        stillActive ? task.chapterName : `${task.chapterName} · 全部下载完成`,
+      )
     } else if (result.error === 'paused') {
       // 暂停: 保留已下进度, 标 paused, 不重排
       patch(task.id, { status: 'paused', error: undefined })
@@ -334,7 +372,16 @@ export function remove(id: string) {
  * only: 'failed' 只清失败/中断; 'done' 只清已完成; 'all' 全清 (含已取消)。
  * 只动记录, 不动已入库的文件。
  */
-export function clearFinished(only: 'failed' | 'done' | 'all' = 'all') {
+/**
+ * 清掉已结束的记录, 进行中和排队的一律保留。
+ * only: 'failed' 只清失败/中断; 'done' 只清已完成; 'all' 全清 (含已取消)。
+ * withFiles: 同时把已完成记录对应的 CBZ 文件从藏书里删掉 (释放空间)。
+ * 只动记录, 不动已入库的文件 (除非 withFiles)。
+ */
+export async function clearFinished(only: 'failed' | 'done' | 'all' = 'all', withFiles = false) {
+  const doneToDelete = withFiles
+    ? downloadState.tasks.filter(t => t.status === 'done' && t.bookId)
+    : []
   const keep = downloadState.tasks.filter(t => {
     if (t.status === 'running' || t.status === 'queued' || t.status === 'paused') return true
     if (only === 'failed') return t.status !== 'failed' && t.status !== 'interrupted'
@@ -343,4 +390,14 @@ export function clearFinished(only: 'failed' | 'done' | 'all' = 'all') {
   })
   downloadState.tasks = keep
   persist()
+
+  // 连文件一起删 (在记录清掉之后, 避免 UI 还在引用)
+  if (doneToDelete.length) {
+    try {
+      const storage = await getStorage()
+      for (const t of doneToDelete) {
+        if (t.bookId) await storage.deleteBook(t.bookId).catch(() => { /* 已删过就跳过 */ })
+      }
+    } catch { /* 删除文件失败不阻断 */ }
+  }
 }

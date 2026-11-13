@@ -266,6 +266,86 @@ async function download(chapter: ComicChapter) {
   if (task.status === 'done') toast(t('comics.downloadSuccess'), 'success')
 }
 
+// ---- 批量下载 ----
+const batchMode = ref(false)
+const batchSelected = ref(new Set<string>())
+const batchDownloading = ref(false)
+
+function toggleBatchMode() {
+  batchMode.value = !batchMode.value
+  batchSelected.value.clear()
+}
+
+function toggleSelect(chapter: ComicChapter) {
+  const id = chapterRequestId(chapter)
+  const next = new Set(batchSelected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  batchSelected.value = next
+}
+
+/** 全选/取消全选 (只统计「尚未入库」的章节) */
+function toggleSelectAll() {
+  const downloadable = chapters.value.filter(c => !isDownloaded(c))
+  const allSelected = downloadable.every(c => batchSelected.value.has(chapterRequestId(c)))
+  const next = new Set(batchSelected.value)
+  if (allSelected) {
+    for (const c of downloadable) next.delete(chapterRequestId(c))
+  } else {
+    for (const c of downloadable) next.add(chapterRequestId(c))
+  }
+  batchSelected.value = next
+}
+
+function isDownloaded(chapter: ComicChapter): boolean {
+  const task = taskOf(chapter)
+  return task?.status === 'done'
+}
+
+/** 批量入队勾选的章节; 已入库的自动跳过 (enqueue 内部查重) */
+async function batchDownload() {
+  const targets = chapters.value.filter(c => batchSelected.value.has(chapterRequestId(c)))
+  if (!targets.length) { toast(t('comics.batchEmpty'), 'info'); return }
+  batchDownloading.value = true
+  let queued = 0
+  let skipped = 0
+  for (const chapter of targets) {
+    const { skipped: s } = await enqueue({
+      uuid,
+      comicId: comicId.value,
+      chapter,
+      comicTitle: info.value?.title || comicId.value,
+      cover: coverUrl(info.value?.cover),
+    })
+    if (s) skipped++
+    else queued++
+  }
+  batchDownloading.value = false
+  batchMode.value = false
+  batchSelected.value.clear()
+  toast(t('comics.batchDone', { queued, skipped }), 'success')
+}
+
+/** 一键下载全部未入库章节 */
+async function batchDownloadAll() {
+  const targets = chapters.value.filter(c => !isDownloaded(c))
+  if (!targets.length) { toast(t('comics.batchNone'), 'info'); return }
+  batchDownloading.value = true
+  let queued = 0
+  for (const chapter of targets) {
+    const { skipped } = await enqueue({
+      uuid,
+      comicId: comicId.value,
+      chapter,
+      comicTitle: info.value?.title || comicId.value,
+      cover: coverUrl(info.value?.cover),
+    })
+    if (!skipped) queued++
+  }
+  batchDownloading.value = false
+  toast(t('comics.batchDone', { queued, skipped: 0 }), 'success')
+}
+
 /** 已入库的章节直接打开; 书被从藏书删了就提示, 让用户重新下载 */
 async function openDownloaded(chapter: ComicChapter) {
   const task = taskOf(chapter)
@@ -421,9 +501,21 @@ function openReader(chapter: ComicChapter) {
         </div>
       </section>
 
-      <h2 class="section-title">{{ t('comics.detailChapters') }}</h2>
+      <h2 class="section-title">
+        {{ t('comics.detailChapters') }}
+        <span class="section-actions">
+          <button v-if="!batchMode" class="btn btn-sm" :disabled="!chapters.length || batchDownloading" @click="toggleBatchMode">{{ t('comics.batchMode') }}</button>
+          <button v-else class="btn btn-sm" @click="toggleSelectAll">{{ t('comics.selectAll') }}</button>
+          <button v-if="batchMode" class="btn btn-sm btn-primary" :disabled="!batchSelected.size || batchDownloading" @click="batchDownload">{{ t('comics.batchDownload') }}<template v-if="batchSelected.size">（{{ batchSelected.size }}）</template></button>
+          <button v-if="batchMode" class="btn btn-sm" @click="toggleBatchMode">{{ t('comics.batchCancel') }}</button>
+          <button v-else class="btn btn-sm" :disabled="!chapters.length || batchDownloading" @click="batchDownloadAll">{{ t('comics.downloadAll') }}</button>
+        </span>
+      </h2>
       <div v-if="chapters.length" class="chapter-list">
-        <div v-for="chapter in chapters" :key="chapterRequestId(chapter)" class="chapter-row">
+        <div v-for="chapter in chapters" :key="chapterRequestId(chapter)" class="chapter-row" :class="{ selectable: batchMode }">
+          <label v-if="batchMode" class="chapter-check" :class="{ checked: batchSelected.has(chapterRequestId(chapter)) }">
+            <input type="checkbox" :checked="batchSelected.has(chapterRequestId(chapter))" @change="toggleSelect(chapter)" />
+          </label>
           <span class="chapter-order">{{ chapter.order ?? '' }}</span>
           <span class="chapter-name" :title="chapter.name">{{ chapter.name }}</span>
           <div class="spacer" />
@@ -504,7 +596,9 @@ function openReader(chapter: ComicChapter) {
 .toolbar .btn { padding: 0 12px; font-size: 13px; }
 .hint { color: var(--text-3); font-size: 13px; line-height: 1.6; margin: 0; }
 .loading-hint { padding: 12px 0; }
-.section-title { font-size: 15px; font-weight: 600; margin: 4px 0 14px; color: var(--text-2); }
+.section-title { font-size: 15px; font-weight: 600; margin: 4px 0 14px; color: var(--text-2); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.section-actions { display: flex; align-items: center; gap: 8px; }
+.section-actions .btn-sm { padding: 0 10px; font-size: 12px; height: 26px; line-height: 24px; }
 .error-text { color: var(--danger, #d9534f); font-size: 13px; padding: 10px 0; }
 
 .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 22px 16px; }
@@ -568,6 +662,10 @@ function openReader(chapter: ComicChapter) {
   border-bottom: 1px solid var(--line); background: var(--surface-1);
 }
 .chapter-row:last-child { border-bottom: 0; }
+.chapter-row.selectable { cursor: pointer; }
+.chapter-row.selectable:hover { background: var(--surface-2); }
+.chapter-check { display: inline-flex; align-items: center; flex: none; }
+.chapter-check input { width: 16px; height: 16px; accent-color: var(--brand, #4f8cff); cursor: pointer; }
 .chapter-order { width: 34px; flex: none; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .chapter-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .chapter-row .btn { flex: none; white-space: nowrap; }

@@ -9,8 +9,9 @@ import { t } from '../i18n'
 import { useLibrary } from '../stores/library'
 import { readerPath } from '../services/readerRoute'
 import { toast } from '../services/toast'
+import { askConfirm, deleteConfirmOptions } from '../services/confirm'
 import {
-  clearFinished, downloadState, failedTasks, finishedTasks,
+  clearFinished, downloadState, failedTasks, finishedTasks, queueSummary,
   initDownloads, remove, retry, cancel, pause, resume, pauseAll, resumeAll,
   type DownloadTask,
 } from '../services/comicPlugin/downloadCenter'
@@ -62,8 +63,19 @@ function bookMissing(task: DownloadTask): boolean {
 }
 
 function clearOnly(only: 'failed' | 'done' | 'all') {
-  clearFinished(only)
+  void clearFinished(only)
   toast(t('downloads.cleared'), 'success')
+}
+
+/** 清完成记录 + 连文件一起删 (释放空间) */
+async function clearDoneWithFiles() {
+  const n = doneList.value.length
+  if (!n) return
+  const ok = await askConfirm(t('downloads.clearWithFilesConfirm', { count: n }), deleteConfirmOptions(t('downloads.clearWithFilesTitle')))
+  if (!ok) return
+  await clearFinished('done', true)
+  void library.refresh()
+  toast(t('downloads.clearedWithFiles'), 'success')
 }
 
 function retryAll() {
@@ -84,11 +96,20 @@ function retryAll() {
       <button v-if="failedList.length" class="btn" @click="retryAll">{{ t('downloads.retryAll') }}</button>
       <button v-if="failedList.length" class="btn" @click="clearOnly('failed')">{{ t('downloads.clearFailed') }}</button>
       <button v-if="doneList.length" class="btn" @click="clearOnly('done')">{{ t('downloads.clearDone') }}</button>
+      <button v-if="doneList.length" class="btn btn-danger" @click="clearDoneWithFiles">{{ t('downloads.clearWithFiles') }}</button>
       <button class="btn" :disabled="!totalCount" @click="clearOnly('all')">{{ t('downloads.clearAll') }}</button>
     </header>
 
     <p v-if="!totalCount" class="empty-title">{{ t('downloads.emptyTitle') }}</p>
     <p v-if="!totalCount" class="hint">{{ t('downloads.emptyHint') }}</p>
+
+    <section v-if="totalCount && queueSummary.remaining" class="queue-summary">
+      <div class="queue-head">
+        <span class="queue-label">{{ t('downloads.queueSummary', { remaining: queueSummary.remaining, done: queueSummary.done }) }}</span>
+        <span class="queue-current" v-if="queueSummary.currentTotal">{{ queueSummary.currentLoaded }} / {{ queueSummary.currentTotal }}</span>
+      </div>
+      <div class="bar-track queue-bar"><div class="bar-fill" :style="{ width: queueSummary.percent + '%' }" /></div>
+    </section>
 
     <section v-if="activeCount" class="group">
       <h2 class="group-title">{{ t('downloads.groupActive') }} <span class="badge">{{ activeCount }}</span></h2>
@@ -178,6 +199,12 @@ function retryAll() {
 
 .empty-title { font-size: 15px; font-weight: 600; margin: 40px 0 6px; }
 .hint { color: var(--text-3); font-size: 13px; line-height: 1.7; margin: 0; }
+
+.queue-summary { margin-bottom: 22px; padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.queue-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.queue-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.queue-current { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.queue-bar { height: 8px; }
 
 .group { margin-bottom: 26px; }
 .group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); margin: 0 0 12px; }
