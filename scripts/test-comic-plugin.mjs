@@ -85,6 +85,52 @@ module.exports.default = {
   },
   procEnv: async () => ({ d: process.env.BAOZIMH_DOMAIN || '', p: typeof process.nextTick }),
   headerJson: async () => JSON.stringify(new Headers({ 'X-Test': 'ok' })),
+  // 绅士漫画的 ky 在模块顶层就探测这些全局, 缺一个整包加载即抛
+  // "invalid 'instanceof' right operand"
+  // ky 的写法: new URL(...) 之后改 .search / .searchParams 再 toString()
+  urlMutate: async () => {
+    var u = new URL('/search/', 'https://www.wnacg.com/');
+    u.search = '?q=' + encodeURIComponent('催眠') + '&f=_all';
+    var a = u.toString();
+    var v = new URL('https://a.com/x');
+    v.searchParams.set('q', 'y');
+    v.searchParams.append('p', '2');
+    return { a: a, b: v.toString(), get: v.searchParams.get('q'), has: v.searchParams.has('p') };
+  },
+  kyProbe: async () => ({
+    req: typeof Request, res: typeof Response, fd: typeof FormData,
+    perf: typeof performance.now(), any: typeof AbortSignal.any,
+  }),
+  reqRoundTrip: async (p) => {
+    var r = new Request(p.url, { method: 'POST', body: 'payload' });
+    var res = await fetch(r, { headers: { 'x-test': '2' } });
+    return {
+      url: r.url, method: r.method, status: res.status, ok: res.ok,
+      text: await res.text(), bodyIsNull: r.body === null, cloneUrl: r.clone().url,
+    };
+  },
+  resCloneJson: async () => {
+    var res = await fetch('https://example.com/json');
+    var text = await res.text();
+    var again = await res.clone().text();
+    return { text: text, again: again, json: await res.clone().json() };
+  },
+  abortAny: async () => {
+    var a = new AbortController(), b = new AbortController();
+    var s = AbortSignal.any([a.signal, b.signal]);
+    var fired = 0;
+    s.addEventListener('abort', function () { fired++ });
+    b.abort();
+    return { aborted: s.aborted, fired: fired };
+  },
+  urlBase: async () => new URL('/statics/js/slider.js', 'https://18comic.vip/comic/1').href,
+  formBody: async () => {
+    var f = new FormData();
+    f.append('user', 'a b');
+    f.append('pass', '1');
+    var res = await fetch('https://example.com/login', { method: 'POST', body: f });
+    return { text: await res.text() };
+  },
   // 同一宿主上并发调用: 各自必须拿到自己的结果
   identityLater: async p => {
     await new Promise(function (r) { setTimeout(r, p.delay); });
@@ -98,10 +144,13 @@ module.exports.default = {
   const toasts = []
   const request = async init => {
     requests.push(init)
-    const body = Buffer.from('hello:' + init.url, 'utf8')
+    const body = Buffer.from(
+      init.url.endsWith('/json') ? '{"ok":true}' : 'hello:' + init.url,
+      'utf8',
+    )
     return {
       status: 200, ok: true, url: init.url,
-      headers: { 'content-type': 'text/plain' },
+      headers: { 'content-type': init.url.endsWith('/json') ? 'application/json' : 'text/plain' },
       bodyBase64: body.toString('base64'),
     }
   }
@@ -181,6 +230,53 @@ module.exports.default = {
   assert.deepEqual(await host.call('procEnv'), { d: '', p: 'function' }, 'process.env 兜底')
   assert.equal(await host.call('headerJson'), '{"x-test":"ok"}', 'Headers 要能摊平成字典给宿主 fetch')
 
+  // ---- Request / Response / FormData / performance / AbortSignal.any ----
+  // 绅士漫画用 ky 发请求, 上面任何一个缺失都会让整个插件包在加载阶段就抛错,
+  // 表现为"这个源一条数据都没有, 别的源一起报失败"。
+  assert.deepEqual(
+    await host.call('kyProbe'),
+    { req: 'function', res: 'function', fd: 'function', perf: 'number', any: 'function' },
+    'ky 的能力探测全局必须齐全',
+  )
+  const rt = await host.call('reqRoundTrip', { url: 'https://example.com/post' })
+  assert.equal(rt.url, 'https://example.com/post')
+  assert.equal(rt.method, 'POST')
+  assert.equal(rt.status, 200)
+  assert.equal(rt.ok, true)
+  assert.equal(rt.text, 'hello:https://example.com/post', 'fetch(new Request(...)) 要能拿到 body')
+  assert.equal(rt.bodyIsNull, true, '.body 必须是 null, 否则 ky 会调字符串的 cancel()')
+  assert.equal(rt.cloneUrl, 'https://example.com/post', 'Request.clone()')
+  assert.equal(requests.at(-1).body, 'payload', 'Request 里的 body 要透传给宿主')
+  assert.equal(requests.at(-1).headers['x-test'], '2', 'fetch 的第二参数 headers 仍要生效')
+
+  const rc = await host.call('resCloneJson')
+  assert.equal(rc.text, '{"ok":true}', 'Response.text()')
+  assert.equal(rc.again, '{"ok":true}', 'Response.clone() 之后还能再读一次')
+  assert.deepEqual(rc.json, { ok: true }, 'Response.json()')
+
+  assert.deepEqual(await host.call('abortAny'), { aborted: true, fired: 1 }, 'AbortSignal.any 合并信号')
+  assert.equal(
+    await host.call('urlBase'),
+    'https://18comic.vip/statics/js/slider.js',
+    'new URL(path, base) 必须支持第二参数 (ky 用它拼相对地址)',
+  )
+  const um = await host.call('urlMutate')
+  assert.equal(um.a, 'https://www.wnacg.com/search/?q=%E5%82%AC%E7%9C%A0&f=_all', 'URL.search 赋值要体现在 href 上')
+  assert.equal(um.b, 'https://a.com/x?q=y&p=2', 'searchParams.set/append 要回写 url')
+  assert.equal(um.get, 'y')
+  assert.equal(um.has, true, 'searchParams.has')
+  assert.equal(
+    (await host.call('formBody')).text,
+    'hello:https://example.com/login',
+    'FormData 请求体',
+  )
+  assert.equal(requests.at(-1).body, 'user=a%20b&pass=1', 'FormData 要摊成 urlencoded')
+  assert.equal(
+    requests.at(-1).headers['content-type'],
+    'application/x-www-form-urlencoded',
+    'FormData 自动补 content-type',
+  )
+
   // ---- 同一宿主并发调用: 结果不能互相覆盖 (并发拉封面时曾导致整页像卡死) ----
   const [fast, slowOne] = await Promise.all([
     host.call('identityLater', { delay: 10, value: 'fast' }, { timeoutMs: 5000 }),
@@ -192,7 +288,7 @@ module.exports.default = {
   host.dispose()
   await assert.rejects(() => host.call('getInfo', {}), /已释放/)
 
-  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / bytes / error / timeout / BreezeHtml / process / Headers / 并发隔离 / dispose)')
+  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / bytes / error / timeout / BreezeHtml / process / Headers / Request / Response / FormData / AbortSignal.any / URL base / 并发隔离 / dispose)')
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

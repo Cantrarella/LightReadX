@@ -6,7 +6,7 @@
  * 独立发现页已取消, 本组件嵌在 ComicSourceView 里, 点漫画或搜索词通过 emit
  * 交给父页面切到详情 / 搜索视图, 保证整个漫画源只有一个入口。
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { toast } from '../services/toast'
@@ -53,8 +53,14 @@ const covers = reactive<Record<string, string>>({})
 
 let coverHost: ComicPluginHost | null = null
 let coverSeq = 0
+/** 卡片 id → 封面地址; 懒加载观察器命中时用它查要拉哪张 */
+const coverUrls = new Map<string, string>()
+const coverInFlight = new Set<string>()
+let coverObserver: IntersectionObserver | null = null
 
 onBeforeUnmount(() => {
+  coverObserver?.disconnect()
+  coverObserver = null
   coverHost?.dispose()
   coverHost = null
   for (const url of Object.values(covers)) URL.revokeObjectURL(url)
@@ -99,12 +105,13 @@ const heading = computed(() => {
 /** 封面也走插件 fetchImageBytes (带防盗链头), 一个长驻宿主并发拉取 */
 /** 一次最多补多少张封面: 列表动辄 40 条, 全量拉会把插件宿主占满, 界面像卡死 */
 const COVER_LIMIT = 40
-const COVER_WORKERS = 3
+const COVER_WORKERS = 6
 
 async function loadCovers(items: Array<{ id: string; cover: string }>) {
+  for (const item of items) if (item.cover && item.id) coverUrls.set(item.id, item.cover)
   const seq = ++coverSeq
   const queue = items.filter(i => i.cover && i.id && !covers[i.id]).slice(0, COVER_LIMIT)
-  if (!queue.length) return
+  if (!queue.length) { void watchCovers(); return }
   if (!coverHost) coverHost = await openPlugin(uuid)
   const host = coverHost
   if (seq !== coverSeq) return
@@ -119,6 +126,39 @@ async function loadCovers(items: Array<{ id: string; cover: string }>) {
     }
   }
   await Promise.all(Array.from({ length: COVER_WORKERS }, () => worker()))
+  if (seq === coverSeq) void watchCovers()
+}
+
+/** 单张封面: 滚动/横滑到哪补到哪, 分区页动辄上百张, 不能一次全拉 */
+async function loadOneCover(id: string, cover: string) {
+  if (covers[id] || !cover) return
+  if (!coverHost) coverHost = await openPlugin(uuid)
+  const bytes = await coverHost.callBytes('fetchImageBytes', { url: cover }, { timeoutMs: 20_000 })
+  if (bytes?.length) covers[id] = bytesToObjectUrl(bytes, cover)
+}
+
+function watchCovers() {
+  if (typeof IntersectionObserver === 'undefined') return
+  if (!coverObserver) {
+    coverObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        const el = entry.target as HTMLElement
+        const id = el.dataset.coverId
+        const cover = id ? coverUrls.get(id) : undefined
+        if (!id || !cover || covers[id] || coverInFlight.has(id)) continue
+        coverInFlight.add(id)
+        coverObserver?.unobserve(el)
+        void loadOneCover(id, cover)
+          .catch(() => { /* 失败留占位图 */ })
+          .finally(() => coverInFlight.delete(id))
+      }
+    }, { rootMargin: '240px' })
+  }
+  void nextTick(() => {
+    document.querySelectorAll<HTMLElement>('[data-cover-id]')
+      .forEach(el => coverObserver?.observe(el))
+  })
 }
 
 function coverKey(item: DiscoverItem): string {
@@ -356,7 +396,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 
           <!-- action-grid: 图标宫格 -->
           <div v-else-if="block.type === 'action-grid'" class="tile-grid">
-            <button v-for="(tile, i) in block.tiles" :key="`${tile.title}-${i}`" type="button" class="tile" @click="runAction(tile.action)">
+            <button v-for="(tile, i) in block.tiles" :key="`${tile.title}-${i}`" type="button" class="tile" :data-cover-id="`tile:${tile.title}`" @click="runAction(tile.action)">
               <div class="tile-cover">
                 <img v-if="tile.cover && covers[`tile:${tile.title}`]" :src="covers[`tile:${tile.title}`]" alt="" loading="lazy" />
                 <div v-else class="cover-placeholder" aria-hidden="true">
@@ -375,7 +415,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
                 <button v-if="section.action" class="btn btn-ghost" @click="onSectionMore(block, si)">{{ t('comics.discoverSeeAll') }}</button>
               </div>
               <div class="card-row">
-                <button v-for="item in section.items" :key="coverKey(item)" type="button" class="comic-card" @click="onItemClick(item)">
+                <button v-for="item in section.items" :key="coverKey(item)" type="button" class="comic-card" :data-cover-id="coverKey(item)" @click="onItemClick(item)">
                   <div class="card-cover">
                     <img v-if="covers[coverKey(item)]" :src="covers[coverKey(item)]" alt="" loading="lazy" />
                     <div v-else class="cover-placeholder" aria-hidden="true">
@@ -391,7 +431,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 
           <!-- comic-grid 及未知区块按网格兜底 -->
           <div v-else class="card-grid">
-            <button v-for="item in block.items" :key="coverKey(item)" type="button" class="comic-card" @click="onItemClick(item)">
+            <button v-for="item in block.items" :key="coverKey(item)" type="button" class="comic-card" :data-cover-id="coverKey(item)" @click="onItemClick(item)">
               <div class="card-cover">
                 <img v-if="covers[coverKey(item)]" :src="covers[coverKey(item)]" alt="" loading="lazy" />
                 <div v-else class="cover-placeholder" aria-hidden="true">
@@ -408,7 +448,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
       <!-- scene 分页列表 -->
       <template v-if="currentScene">
         <div v-if="sceneItems.length" class="card-grid">
-          <button v-for="item in sceneItems" :key="coverKey(item)" type="button" class="comic-card" @click="onItemClick(item)">
+          <button v-for="item in sceneItems" :key="coverKey(item)" type="button" class="comic-card" :data-cover-id="coverKey(item)" @click="onItemClick(item)">
             <div class="card-cover">
               <img v-if="covers[coverKey(item)]" :src="covers[coverKey(item)]" alt="" loading="lazy" />
               <div v-else class="cover-placeholder" aria-hidden="true">
@@ -510,8 +550,10 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 .tile-title { font-size: 12px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 20px 14px; }
-.card-row { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
-.card-row .comic-card { flex: 0 0 130px; }
+.card-row { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; scroll-snap-type: x proximity; }
+/* 横滑行不画滚动条 (Windows 上又粗又抢眼), 卡片吸附一下手感更稳 */
+.card-row::-webkit-scrollbar { display: none; }
+.card-row .comic-card { flex: 0 0 130px; scroll-snap-align: start; }
 .comic-card { display: block; text-align: left; border: 0; background: none; color: inherit; cursor: pointer; padding: 0; min-width: 0; }
 .card-cover { aspect-ratio: 3 / 4; border-radius: 10px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--line); }
 .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }

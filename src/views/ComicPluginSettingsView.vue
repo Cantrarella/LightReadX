@@ -15,6 +15,7 @@ import {
   type PluginCapability, type PluginLoginBundle, type PluginSettingsBundle,
 } from '../services/comicPlugin/account'
 import AppModal from '../components/AppModal.vue'
+import SliderCaptcha from '../components/SliderCaptcha.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,6 +89,9 @@ async function openLogin() {
 
 async function doLogin() {
   if (!loginBundle.value || submitting.value) return
+  // 滑块没通过就别提交: 插件那边只会回一句「账号或密码不能为空」, 用户看不出是缺滑块
+  const missing = loginBundle.value.fields.find(f => f.kind === 'slider-captcha' && !String(loginValues[f.key] ?? '').trim())
+  if (missing) { error.value = t('comics.sliderRequired'); return }
   submitting.value = true
   error.value = ''
   try {
@@ -206,15 +210,24 @@ function updateField(target: Record<string, unknown>, key: string, event: Event)
     <AppModal v-if="showLogin && loginBundle" :title="loginBundle.title" @close="showLogin = false">
       <div class="login-form">
         <p v-if="loginBundle.title" class="hint">{{ t('comics.loginHint') }}</p>
-        <label v-for="field in loginBundle.fields" :key="field.key" class="field">
+        <div v-for="field in loginBundle.fields" :key="field.key" class="field">
           <span class="field-label">{{ field.label }}</span>
+          <!-- 滑块验证: 出题 / 校验都交给插件, 宿主只采集位置与轨迹 -->
+          <SliderCaptcha
+            v-if="field.kind === 'slider-captcha' && field.slider"
+            :uuid="uuid"
+            :create-fn-path="field.slider.createFnPath"
+            :verify-fn-path="field.slider.verifyFnPath"
+            @verified="pass => { loginValues[field.key] = pass }"
+          />
           <input
+            v-else
             class="input" :type="field.kind === 'password' ? 'password' : field.kind === 'number' ? 'number' : 'text'"
             :placeholder="field.placeholder || ''"
             :value="String(loginValues[field.key] ?? '')"
             @input="updateField(loginValues, field.key, $event)"
           />
-        </label>
+        </div>
         <div class="modal-actions">
           <button class="btn" @click="showLogin = false">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" :disabled="submitting" @click="doLogin">{{ loginBundle.submitText }}</button>

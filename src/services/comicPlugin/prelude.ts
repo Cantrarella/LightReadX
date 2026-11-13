@@ -66,15 +66,52 @@ globalThis.btoa = function(s) {
 };
 
 globalThis.AbortSignal = class AbortSignal {
-  constructor() { this.aborted = false; this.reason = undefined; this._timeoutMs = 0; }
+  constructor() { this.aborted = false; this.reason = undefined; this._timeoutMs = 0; this._listeners = []; }
   static timeout(ms) { const s = new AbortSignal(); s._timeoutMs = Number(ms) || 0; return s; }
   static abort(reason) { const s = new AbortSignal(); s.aborted = true; s.reason = reason; return s; }
-  addEventListener() {} removeEventListener() {}
+  /** ky 会做 typeof AbortSignal.any === 'function' 的能力探测, 给了就走合并分支 */
+  static any(signals) {
+    const list = (signals || []).filter(Boolean);
+    const merged = new AbortSignal();
+    let ms = 0;
+    for (const s of list) {
+      if (s && s._timeoutMs && (!ms || s._timeoutMs < ms)) ms = s._timeoutMs;
+    }
+    merged._timeoutMs = ms;
+    const already = list.find(function (s) { return s && s.aborted; });
+    if (already) { merged.aborted = true; merged.reason = already.reason; }
+    // 任一来源 abort 时, 合并信号自己也要变成 aborted 并通知自己的监听者
+    // (ky 靠这个回调去 reject 正在等待的请求)
+    list.forEach(function (src) {
+      if (!src || typeof src.addEventListener !== 'function') return;
+      src.addEventListener('abort', function () {
+        if (merged.aborted) return;
+        merged.aborted = true;
+        merged.reason = src.reason;
+        merged._emit('abort');
+      });
+    });
+    return merged;
+  }
+  _emit(type) {
+    const fns = this._listeners.slice();
+    for (let i = 0; i < fns.length; i++) { try { fns[i]({ type: type, target: this }); } catch (e) {} }
+  }
+  addEventListener(type, fn) { if (typeof fn === 'function') this._listeners.push(fn); }
+  removeEventListener(type, fn) {
+    const i = this._listeners.indexOf(fn);
+    if (i >= 0) this._listeners.splice(i, 1);
+  }
   throwIfAborted() { if (this.aborted) throw this.reason; }
 };
 globalThis.AbortController = class AbortController {
   constructor() { this.signal = new AbortSignal(); }
-  abort(reason) { this.signal.aborted = true; this.signal.reason = reason ?? new Error('abort'); }
+  abort(reason) {
+    if (this.signal.aborted) return;
+    this.signal.aborted = true;
+    this.signal.reason = reason ?? new Error('abort');
+    this.signal._emit('abort');
+  }
 };
 
 // ---- Breeze crypto 兼容对象 (不是 WebCrypto / Node crypto) ----
@@ -177,47 +214,215 @@ globalThis.bridge = {
 };
 
 // ---- URL / URLSearchParams ----
+// ky 会 new URL(req.url) 之后改 u.search / u.searchParams 再 toString(),
+// 所以这些字段必须是"活的": 改了就体现在 href 上。早期版本把 href 当普通属性存,
+// 结果插件拼的 ?q=xxx 全被丢掉 (绅士漫画搜索永远 0 条就是这个)。
 globalThis.URL = class URL {
   constructor(input, base) {
-    const raw = String(input);
-    const parsed = __hostUrlParse(raw);
+    this._reset(String(input), base == null ? '' : String(base));
+  }
+  _reset(raw, base) {
+    const parsed = __hostUrlParse(raw, base);
     if (!parsed) throw new Error('Invalid URL: ' + raw);
-    Object.assign(this, JSON.parse(parsed));
-    this.searchParams = new URLSearchParams(this.search.replace(/^\\?/, ''));
+    const o = JSON.parse(parsed);
+    this.protocol = o.protocol || '';
+    this.host = o.host || '';
+    this.hostname = o.hostname || '';
+    this.pathname = o.pathname || '/';
+    this.origin = o.origin || '';
+    this.hash = o.hash || '';
+    this._search = o.search || '';
+  }
+  get href() { return this.protocol + '//' + this.host + this.pathname + this._search + this.hash; }
+  set href(value) { this._reset(String(value), ''); }
+  get search() { return this._search; }
+  set search(value) {
+    const s = String(value == null ? '' : value);
+    this._search = !s ? '' : (s.charAt(0) === '?' ? s : '?' + s);
+  }
+  /** searchParams 的写操作要回写到 url 上 */
+  get searchParams() {
+    const self = this;
+    return new URLSearchParams(this._search.replace(/^\\?/, ''), function (qs) {
+      self._search = qs ? '?' + qs : '';
+    });
   }
   toString() { return this.href; }
+  toJSON() { return this.href; }
 };
 globalThis.URLSearchParams = class URLSearchParams {
-  constructor(init) {
+  constructor(init, onChange) {
     this._items = [];
+    this._onChange = typeof onChange === 'function' ? onChange : null;
     if (typeof init === 'string') {
-      for (const part of init.split('&')) {
+      for (const part of init.replace(/^\\?/, '').split('&')) {
         if (!part) continue;
         const i = part.indexOf('=');
-        this._items.push([decodeURIComponent(i < 0 ? part : part.slice(0, i)), decodeURIComponent(i < 0 ? '' : part.slice(i + 1))]);
+        this._items.push([
+          decodeURIComponent(i < 0 ? part : part.slice(0, i)),
+          decodeURIComponent(i < 0 ? '' : part.slice(i + 1)),
+        ]);
       }
     } else if (init && typeof init === 'object') {
       for (const [k, v] of Object.entries(init)) this._items.push([k, String(v)]);
     }
   }
-  set(k, v) { this._items = this._items.filter(([key]) => key !== k); this._items.push([k, String(v)]); }
-  get(k) { const f = this._items.find(([key]) => key === k); return f ? f[1] : null; }
+  _dirty() { if (this._onChange) this._onChange(this.toString()); }
+  append(k, v) { this._items.push([String(k), String(v)]); this._dirty(); }
+  set(k, v) {
+    this._items = this._items.filter(([key]) => key !== String(k));
+    this._items.push([String(k), String(v)]);
+    this._dirty();
+  }
+  get(k) { const f = this._items.find(([key]) => key === String(k)); return f ? f[1] : null; }
+  getAll(k) { return this._items.filter(([key]) => key === String(k)).map(e => e[1]); }
+  has(k) { return this._items.some(([key]) => key === String(k)); }
+  delete(k) { this._items = this._items.filter(([key]) => key !== String(k)); this._dirty(); }
+  sort() { this._items.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)); this._dirty(); }
+  get size() { return this._items.length; }
+  entries() { return this._items.slice()[Symbol.iterator](); }
+  keys() { return this._items.map(e => e[0])[Symbol.iterator](); }
+  values() { return this._items.map(e => e[1])[Symbol.iterator](); }
+  forEach(fn) { this._items.forEach(e => fn(e[1], e[0], this)); }
   toString() { return this._items.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&'); }
+  get [Symbol.toStringTag]() { return 'URLSearchParams'; }
 };
 
-// ---- fetch（宿主执行，二进制 base64 回传）----
-globalThis.fetch = async function(url, init = {}) {
-  const r = await __hostAsync('fetch', [{ url: String(url), method: init.method || 'GET', headers: init.headers || {}, body: init.body, timeoutMs: init.signal && init.signal._timeoutMs }]);
-  const bin = Uint8Array.from(atob(r.bodyBase64), c => c.charCodeAt(0));
-  const dec = new TextDecoder();
-  return {
-    status: r.status, ok: r.ok, url: r.url,
-    headers: { get: k => r.headers[String(k).toLowerCase()] ?? null, raw: r.headers },
-    text: async () => dec.decode(bin),
-    json: async () => JSON.parse(dec.decode(bin)),
-    arrayBuffer: async () => bin.buffer,
-    bytes: async () => bin,
+// ---- Request / Response / FormData: ky 等现代 HTTP 库在模块顶层就做能力探测 ----
+// 缺了 Request 会让 x instanceof globalThis.Request 直接抛
+// "invalid 'instanceof' right operand" (绅士漫画的 ky 请求层就栽在这)
+if (typeof globalThis.FormData === 'undefined') {
+  globalThis.FormData = class FormData {
+    constructor() { this._entries = []; this.__isFormData = true; }
+    append(k, v) { this._entries.push([String(k), v]); }
+    set(k, v) { this.delete(k); this.append(k, v); }
+    get(k) { for (var i = 0; i < this._entries.length; i++) if (this._entries[i][0] === String(k)) return this._entries[i][1]; return null; }
+    getAll(k) { var out = []; for (var i = 0; i < this._entries.length; i++) if (this._entries[i][0] === String(k)) out.push(this._entries[i][1]); return out; }
+    has(k) { return this.getAll(k).length > 0; }
+    delete(k) { this._entries = this._entries.filter(function (e) { return e[0] !== String(k); }); }
+    entries() { return this._entries.slice()[Symbol.iterator](); }
+    keys() { return this._entries.map(function (e) { return e[0]; })[Symbol.iterator](); }
+    values() { return this._entries.map(function (e) { return e[1]; })[Symbol.iterator](); }
+    forEach(fn) { this._entries.forEach(function (e) { fn(e[1], e[0]); }); }
+    get [Symbol.toStringTag]() { return 'FormData'; }
   };
+}
+if (typeof globalThis.Request === 'undefined') {
+  var __reqFields = ['mode', 'credentials', 'cache', 'redirect', 'referrer', 'referrerPolicy', 'integrity', 'keepalive', 'duplex'];
+  globalThis.Request = class Request {
+    constructor(input, init) {
+      init = init || {};
+      var base = (input && input.__isRequest) ? input : null;
+      this.url = base ? base.url : String(input);
+      this.method = String(init.method || (base ? base.method : 'GET')).toUpperCase();
+      this.headers = new globalThis.Headers(init.headers || (base ? base.headers : {}));
+      // 原始 body 存 _body; 对外的 .body 必须是 null —— ky 清理时会 body.cancel(),
+      // 字符串 body 没有 cancel, 直接调会抛 "not a function"
+      this._body = init.body !== undefined ? init.body
+        : (base ? (base._body !== undefined ? base._body : base.body) : null);
+      this.signal = init.signal || (base ? base.signal : null) || null;
+      for (var i = 0; i < __reqFields.length; i++) {
+        var k = __reqFields[i];
+        this[k] = init[k] !== undefined ? init[k] : (base ? base[k] : undefined);
+      }
+      this.__isRequest = true;
+    }
+    clone() {
+      return new globalThis.Request(this.url, {
+        method: this.method,
+        headers: this.headers && this.headers.toJSON ? this.headers.toJSON() : {},
+        body: this._body,
+        signal: this.signal,
+      });
+    }
+    /** 非流式实现: 对外声明没有 body 流, 免得 ky 去 cancel 一个字符串 */
+    get body() { return null; }
+    get [Symbol.toStringTag]() { return 'Request'; }
+  };
+}
+if (typeof globalThis.Response === 'undefined') {
+  globalThis.Response = class Response {
+    constructor(body, init) {
+      init = init || {};
+      this._body = body === undefined ? null : body;
+      this.status = init.status === undefined ? 200 : Number(init.status);
+      this.statusText = init.statusText === undefined ? '' : String(init.statusText);
+      this.headers = new globalThis.Headers(init.headers || {});
+      this.url = init.url || '';
+      this.redirected = init.redirected === true;
+      this.type = init.type || 'basic';
+      this.bodyUsed = false;
+      this.ok = this.status >= 200 && this.status < 300;
+    }
+    _bin() {
+      var b = this._body;
+      if (b == null) return new Uint8Array(0);
+      if (typeof b === 'string') return new TextEncoder().encode(b);
+      if (b.buffer && b.BYTES_PER_ELEMENT === 1) return new Uint8Array(b.buffer, b.byteOffset || 0, b.byteLength);
+      return new TextEncoder().encode(String(b));
+    }
+    async text() { this.bodyUsed = true; return typeof this._body === 'string' ? this._body : new TextDecoder().decode(this._bin()); }
+    async json() { return JSON.parse(await this.text()); }
+    async arrayBuffer() { var b = this._bin(); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); }
+    async bytes() { this.bodyUsed = true; return this._bin(); }
+    async blob() {
+      var b = this._bin();
+      return { size: b.length, type: this.headers.get('content-type') || '', arrayBuffer: async function () { return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); } };
+    }
+    clone() {
+      return new globalThis.Response(this._body, {
+        status: this.status, statusText: this.statusText, url: this.url,
+        headers: this.headers && this.headers.toJSON ? this.headers.toJSON() : {},
+      });
+    }
+    get body() { return null; }
+    get [Symbol.toStringTag]() { return 'Response'; }
+    static error() { return new globalThis.Response(null, { status: 0 }); }
+    static redirect(u, s) { return new globalThis.Response(null, { status: s || 302, headers: { location: u } }); }
+  };
+}
+if (typeof globalThis.performance === 'undefined') {
+  globalThis.performance = { now: function () { return Date.now(); }, timeOrigin: Date.now() };
+}
+
+// ---- fetch（宿主执行，二进制 base64 回传）----
+// 支持 fetch(url, init) 与 fetch(new Request(...)) 两种调用; 返回真 Response 实例,
+// 因为 ky 用 response instanceof Response / body 流判断是否可用。
+globalThis.fetch = async function (input, init) {
+  var opts = init || {};
+  var url, method = opts.method, headers = opts.headers, body = opts.body;
+  var req = (input && typeof input === 'object' && input.__isRequest) ? input : null;
+  if (req) {
+    url = req.url;
+    if (!method) method = req.method;
+    if (!headers) headers = req.headers;
+    if (body === undefined) body = req._body;
+  } else {
+    url = String(input);
+  }
+  var hdr = {};
+  if (headers) {
+    if (typeof headers.toJSON === 'function') hdr = headers.toJSON();
+    else if (Array.isArray(headers)) headers.forEach(function (p) { hdr[String(p[0]).toLowerCase()] = String(p[1]); });
+    else for (var hk in headers) hdr[String(hk).toLowerCase()] = String(headers[hk]);
+  }
+  var payload = body;
+  if (payload != null && typeof payload !== 'string') {
+    if (payload.__isFormData) {
+      var parts = [];
+      payload.forEach(function (v, k) { parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(v)); });
+      payload = parts.join('&');
+      if (!hdr['content-type']) hdr['content-type'] = 'application/x-www-form-urlencoded';
+    } else if (payload instanceof URLSearchParams) payload = payload.toString();
+    else if (payload.buffer && payload.BYTES_PER_ELEMENT === 1) payload = new TextDecoder().decode(new Uint8Array(payload.buffer, payload.byteOffset || 0, payload.byteLength));
+    else payload = JSON.stringify(payload);
+  }
+  var signalMs = (opts.signal && opts.signal._timeoutMs) || (req && req.signal && req.signal._timeoutMs) || 0;
+  var r = await __hostAsync('fetch', [{ url: url, method: method || 'GET', headers: hdr, body: payload, timeoutMs: signalMs }]);
+  var bin = Uint8Array.from(atob(r.bodyBase64), function (c) { return c.charCodeAt(0); });
+  return new globalThis.Response(bin, {
+    status: r.status, statusText: r.statusText, url: r.url, headers: r.headers,
+  });
 };
 
 // ---- 宿主二进制回传 / 更完整的 Web API 兼容 ----
@@ -228,28 +433,9 @@ globalThis.__bytesToBase64 = function (b) {
   for (var i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
   return btoa(s);
 };
-URLSearchParams.prototype.append = function (k, v) { this._items.push([k, String(v)]); };
-URLSearchParams.prototype.has = function (k) { return this._items.some(function (x) { return x[0] === k; }); };
-URLSearchParams.prototype.delete = function (k) { this._items = this._items.filter(function (x) { return x[0] !== k; }); };
-URLSearchParams.prototype.getAll = function (k) { return this._items.filter(function (x) { return x[0] === k; }).map(function (x) { return x[1]; }); };
-URLSearchParams.prototype.forEach = function (fn) { this._items.forEach(function (x) { fn(x[1], x[0]); }); };
-URL.prototype.toJSON = function () { return this.href; };
+// URLSearchParams 的写操作已经在类里实现 (会回写 url), 这里只补一个迭代器,
+// 不要再往原型上盖 append/delete —— 盖掉就丢了回写, 插件拼的参数会静默消失
 URLSearchParams.prototype[Symbol.iterator] = function () { return this._items[Symbol.iterator](); };
-
-// fetch 响应的 headers 补 forEach / has
-var __origFetch = globalThis.fetch;
-globalThis.fetch = async function (url, init) {
-  // 插件常写 new Headers(...) 再传进来, 宿主只认普通对象
-  var opts = init;
-  if (opts && opts.headers && typeof opts.headers.toJSON === 'function') {
-    opts = Object.assign({}, opts, { headers: opts.headers.toJSON() });
-  }
-  const r = await __origFetch(url, opts);
-  r.headers.forEach = function (fn) { Object.keys(r.headers.raw || {}).forEach(function (k) { fn(r.headers.raw[k], k); }); };
-  r.headers.has = function (k) { return (r.headers.raw || {})[String(k).toLowerCase()] != null; };
-  r.blob = async function () { return { arrayBuffer: async () => (await r.arrayBuffer()), type: r.headers.get('content-type') || '' }; };
-  return r;
-};
 
 // ---- Breeze 运行时全局工具 ----
 globalThis.bytesToBase64 = function (b) { return globalThis.__bytesToBase64(b); };

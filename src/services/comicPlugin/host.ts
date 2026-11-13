@@ -225,9 +225,10 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   expose('__hostLog', (...args: any[]) => {
     if (options.log) options.log('[plugin]', ...args.map(a => ctx.dump(a)))
   })
-  expose('__hostUrlParse', (h: any) => {
+  expose('__hostUrlParse', (h: any, b?: any) => {
     try {
-      const u = new URL(ctx.getString(h))
+      const base = b ? ctx.getString(b) : undefined
+      const u = new URL(ctx.getString(h), base || undefined)
       return ctx.newString(JSON.stringify({
         href: u.href, protocol: u.protocol, host: u.host, hostname: u.hostname,
         pathname: u.pathname, search: u.search, hash: u.hash, origin: u.origin,

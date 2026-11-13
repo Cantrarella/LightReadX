@@ -89,6 +89,19 @@ export function humanizeIsoText(text: string): string {
   })
 }
 
+/** 有些插件把 updatedAt 直接给成 unix 秒/毫秒字符串 (禁漫: "1794534613"), 摆在卡片下面很难看 */
+export function humanizeTimestamp(text: string): string {
+  const raw = text.trim()
+  if (!/^\d{10}$|^\d{13}$/.test(raw)) return text
+  const n = Number(raw)
+  const d = new Date(raw.length === 13 ? n : n * 1000)
+  const t = d.getTime()
+  // 只认 2000~2100 之间的时间戳, 免得把普通数字串误伤
+  if (!Number.isFinite(t) || t < Date.UTC(2000, 0, 1) || t > Date.UTC(2100, 0, 1)) return text
+  const pad = (v: number) => String(v).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 /** Breeze 的 titleMeta / metadata.value 都是 {name, onTap:{type:'openSearch',payload:{keyword}}} */
 export function detailChip(raw: unknown): DetailChip | null {
   if (typeof raw === 'string') {

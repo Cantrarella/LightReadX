@@ -12,6 +12,11 @@ import { t } from '../../i18n'
 import { withPlugin } from './index'
 import * as registry from './registry'
 
+export interface PluginSliderSpec {
+  createFnPath: string
+  verifyFnPath: string
+}
+
 export interface PluginSettingField {
   key: string
   kind: string
@@ -20,6 +25,8 @@ export interface PluginSettingField {
   description?: string
   options?: Array<{ label: string; value: unknown }>
   defaultValue?: unknown
+  /** kind='slider-captcha' 时插件给的题目/校验函数 */
+  slider?: PluginSliderSpec
 }
 
 export interface PluginSettingSection {
@@ -67,6 +74,12 @@ function normalizeField(raw: unknown): PluginSettingField {
     const o = obj(option)
     return { label: text(o.label) || text(o.title) || text(o.value), value: o.value ?? o.id }
   })
+  // slider-captcha: 插件把出题/校验函数挂在 field.slider 上, 宿主据此渲染滑块
+  const slider = obj(f.slider)
+  const sliderSpec = {
+    createFnPath: text(slider.createFnPath) || text(f.createFnPath),
+    verifyFnPath: text(slider.verifyFnPath) || text(f.verifyFnPath),
+  }
   return {
     key: text(f.key),
     kind: text(f.kind) || 'text',
@@ -75,6 +88,7 @@ function normalizeField(raw: unknown): PluginSettingField {
     ...(text(f.description) ? { description: text(f.description) } : {}),
     ...(options.length ? { options } : {}),
     ...(f.defaultValue !== undefined ? { defaultValue: f.defaultValue } : {}),
+    ...(sliderSpec.createFnPath && sliderSpec.verifyFnPath ? { slider: sliderSpec } : {}),
   }
 }
 

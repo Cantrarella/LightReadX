@@ -1667,7 +1667,7 @@ async function batchClearTags() {
   flex-wrap: wrap;
   margin: 0 calc(-1 * var(--page-x)) 18px;
   /* --chrome-inset-right: Windows 自绘窗口按钮浮在右上角, 吸顶工具栏右侧让开 (styles/main.css) */
-  padding: var(--page-top) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
+  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
@@ -1748,7 +1748,7 @@ async function batchClearTags() {
   position: relative;
   display: flex;
   align-items: center;
-  width: 260px;
+  width: 320px;
   max-width: 100%;
 }
 .search-icon {
@@ -1759,8 +1759,10 @@ async function batchClearTags() {
 }
 .search {
   width: 100%;
-  padding-left: 34px;
-  padding-right: 30px;
+  /* 与右侧按钮同高: 少了 height 会比「添加书籍」矮一截, 顶栏看着不齐 */
+  height: var(--control-h);
+  padding: 0 30px 0 34px;
+  font-size: 13px;
   /* 与 App 一致: 填充式胶囊搜索框, 聚焦时才出现描边 */
   border-color: transparent;
   border-radius: var(--radius-pill);

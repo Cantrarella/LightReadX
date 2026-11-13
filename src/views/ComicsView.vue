@@ -286,7 +286,7 @@ function openStore() {
   gap: 10px;
   flex-wrap: wrap;
   margin: 0 calc(-1 * var(--page-x)) 18px;
-  padding: var(--page-top) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
+  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
@@ -296,9 +296,11 @@ function openStore() {
 .toolbar h1 { font-size: var(--page-title); font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
 .count { color: var(--text-3); font-size: 13px; white-space: nowrap; }
 .spacer { flex: 1; }
-.search-field { position: relative; display: flex; align-items: center; width: 260px; max-width: 100%; }
+.search-field { position: relative; display: flex; align-items: center; width: 320px; max-width: 100%; }
 .search-icon { position: absolute; left: 12px; color: var(--text-3); pointer-events: none; }
-.search { width: 100%; padding-left: 34px; padding-right: 30px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
+/* 搜索框跟按钮同高同字号, 否则一排控件高矮不齐 */
+.search { width: 100%; height: var(--control-h); padding: 0 30px 0 34px; font-size: 13px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
+.toolbar .btn { padding: 0 12px; font-size: 13px; }
 .comic-section { margin-top: 12px; }
 .comic-tabs { display: flex; gap: 4px; margin: 4px 0 0; border-bottom: 1px solid var(--line); }
 .comic-tab {

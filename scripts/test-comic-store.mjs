@@ -209,6 +209,46 @@ const fallback = discover.normalizeFunctionPage({
 })
 assert.equal(fallback.blocks[0].items.length, 1)
 
+// 禁漫把 updatedAt 直接给成 unix 秒字符串, 卡片副标题不能原样摆一串数字
+const tsPage = discover.normalizeFunctionPage({
+  scheme: { body: { children: [{ type: 'comic-grid', key: 'items' }] } },
+  data: { items: [
+    { id: 't1', title: '漫画丁', updatedAt: '1794534613' },
+    { id: 't2', title: '漫画戊', subtitle: '第 3 话', updatedAt: '1794534613' },
+    { id: 't3', title: '漫画己', updatedAt: '2026-11-12T02:33:48.000Z' },
+  ] },
+})
+assert.match(tsPage.blocks[0].items[0].subtitle, /^\d{4}-\d{2}-\d{2}$/, 'unix 秒要转成日期')
+assert.equal(tsPage.blocks[0].items[1].subtitle, '第 3 话', '有 subtitle 就别动')
+assert.equal(tsPage.blocks[0].items[2].subtitle, '2026-11-12T02:33:48.000Z', 'ISO 字符串原样留给上层处理')
+
+// 禁漫推荐页: data.sections 直接就是分区数组 (外面没有再包一层 { sections })
+const jmShape = discover.normalizeFunctionPage({
+  scheme: { type: 'page', title: '推荐', body: { children: [{ type: 'comic-section-list', key: 'sections' }] } },
+  data: {
+    sections: [
+      { id: '26', title: '連載更新', action: { type: 'openComicList', payload: { scene: { title: '连载更新' } } },
+        items: [{ id: 'a1', title: '漫画甲', cover: { url: 'https://x/a1.jpg' } }] },
+      { id: '27', title: '排行榜', items: [{ id: 'b1', title: '漫画乙' }] },
+    ],
+  },
+})
+assert.equal(jmShape.blocks[0].sections.length, 2, '分区数组不能被当成一堆漫画卡片')
+assert.equal(jmShape.blocks[0].sections[0].title, '連載更新')
+assert.equal(jmShape.blocks[0].sections[0].items[0].title, '漫画甲')
+assert.equal(jmShape.blocks[0].sections[0].items[0].cover, 'https://x/a1.jpg')
+assert.equal(jmShape.blocks[0].sections[0].action.type, 'openComicList')
+assert.equal(jmShape.blocks[0].sections[1].items.length, 1)
+assert.equal(jmShape.blocks[0].items.length, 0, '兜底网格不能被误填')
+
+// 有的插件省掉分区层, data 直接是漫画数组 → 当成一个匿名分区
+const flatShape = discover.normalizeFunctionPage({
+  scheme: { body: { children: [{ type: 'comic-section-list', key: 'list' }] } },
+  data: { list: [{ id: 'x1', title: '漫画丙' }] },
+})
+assert.equal(flatShape.blocks[0].sections.length, 1)
+assert.equal(flatShape.blocks[0].sections[0].items[0].title, '漫画丙')
+
 // ---- 10. 首页 bundle / scene / action ----
 const home = discover.normalizeHomeBundle({
   source: 'p',

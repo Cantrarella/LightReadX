@@ -11,7 +11,7 @@
  * getPluginCloudFavoritePagesBundle 合并成「云端收藏」tab。
  */
 import { withPlugin, type ComicPluginHost } from './index'
-import { coverUrl } from './normalize'
+import { coverUrl, humanizeTimestamp } from './normalize'
 import type { ComicSearchItem } from './types'
 
 export interface PluginAction {
@@ -129,7 +129,7 @@ export function normalizeItem(raw: unknown): DiscoverItem {
   return {
     id: text(r.id) || comicId,
     title: text(r.title) || text(r.name),
-    subtitle: text(r.subtitle) || text(r.updatedAt),
+    subtitle: humanizeTimestamp(text(r.subtitle)) || humanizeTimestamp(text(r.updatedAt)),
     cover: coverUrl(r.cover),
     action,
   }
@@ -168,7 +168,20 @@ export function normalizeFunctionPage(raw: unknown): DiscoverPage {
         return { title: text(i.title) || text(i.name), cover: coverUrl(i.cover), action: actionOf(i.action) }
       }).filter(tile => tile.title)
     } else if (type === 'comic-section-list') {
-      block.sections = (sectionList.length ? sectionList : rawSlot && Array.isArray(rawSlot) ? [rawSlot] : []).map(section => {
+      // data[key] 有三种写法:
+      //   ① { sections: [...] }        ② 直接就是分区数组 (禁漫的推荐页)
+      //   ③ 直接是漫画数组 (个别插件省掉分区这一层)
+      const rawArray = Array.isArray(rawSlot) ? rawSlot : []
+      const looksLikeSections = rawArray.some(el => {
+        const e = obj(el)
+        return Array.isArray(e.items) || Array.isArray(e.sections)
+      })
+      const sectionSource = sectionList.length
+        ? sectionList
+        : rawArray.length
+          ? (looksLikeSections ? rawArray : [{ items: rawArray }])
+          : []
+      block.sections = sectionSource.map(section => {
         const s = obj(section)
         return {
           title: text(s.title), subtitle: text(s.subtitle), action: actionOf(s.action),
