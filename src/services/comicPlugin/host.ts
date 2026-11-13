@@ -377,8 +377,11 @@ globalThis.__calls = globalThis.__calls || {};
       if (disposed) return
       disposed = true
       pending.clear()
-      ctx.dispose()
-      runtime.dispose()
+      // QuickJS-WASM 在句柄没清干净时 dispose 会 abort
+      // (Assertion failed: list_empty(&rt->gc_obj_list)), 这只是收尾告警,
+      // 不能让它把已经成功的整章下载判成失败
+      try { ctx.dispose() } catch { /* 忽略 */ }
+      try { runtime.dispose() } catch { /* 忽略 */ }
     },
   }
 }

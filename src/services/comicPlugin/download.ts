@@ -62,6 +62,49 @@ function toBlob(bytes: Uint8Array, type: string): Blob {
   return new Blob([copy.buffer as ArrayBuffer], { type })
 }
 
+let zipWorker: Worker | null = null
+let zipSeq = 0
+
+/** 打包交给 Worker, 大章节也不会把界面卡住; Worker 起不来就退回主线程 */
+function packAsync(entries: Array<{ name: string; bytes: Uint8Array }>): Promise<Uint8Array> {
+  if (typeof Worker === 'undefined') {
+    const map: Record<string, Uint8Array> = {}
+    for (const entry of entries) map[entry.name] = entry.bytes
+    return Promise.resolve(zipSync(map, { level: 0 }))
+  }
+  try {
+    if (!zipWorker) {
+      zipWorker = new Worker(new URL('./zipWorker.ts', import.meta.url), { type: 'module' })
+    }
+    const worker = zipWorker
+    const id = ++zipSeq
+    return new Promise((resolve, reject) => {
+      const onMessage = (event: MessageEvent) => {
+        if (event.data?.id !== id) return
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        if (event.data.error) reject(new Error(event.data.error))
+        else resolve(event.data.zipped as Uint8Array)
+      }
+      const onError = (event: ErrorEvent) => {
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        reject(event.error ?? new Error(event.message))
+      }
+      worker.addEventListener('message', onMessage)
+      worker.addEventListener('error', onError)
+      worker.postMessage({
+        id,
+        entries: entries.map(e => ({ name: e.name, bytes: e.bytes })),
+      }, entries.map(e => e.bytes.buffer as ArrayBuffer))
+    })
+  } catch {
+    const map: Record<string, Uint8Array> = {}
+    for (const entry of entries) map[entry.name] = entry.bytes
+    return Promise.resolve(zipSync(map, { level: 0 }))
+  }
+}
+
 /** 下载单章并入库; 返回的 bookId 可直接跳阅读器 */
 export async function downloadChapterAsCbz(
   uuid: string,
@@ -124,13 +167,12 @@ export async function downloadChapterAsCbz(
     if (failure) throw new Error(failure)
 
     report('packing', pages.length, pages.length)
-    const entries: Record<string, Uint8Array> = {}
+    const entries: Array<{ name: string; bytes: Uint8Array }> = []
     for (let i = 0; i < pages.length; i++) {
       const bytes = images[i]
-      if (bytes) entries[pageFileName(pages[i], i, pages.length)] = bytes
+      if (bytes) entries.push({ name: pageFileName(pages[i], i, pages.length), bytes })
     }
-    // 图片本身已是 JPEG/PNG/WebP, 存储模式即可, 再 deflate 纯浪费 CPU
-    const zipped = zipSync(entries, { level: 0 })
+    const zipped = await packAsync(entries)
 
     const title = (content.title || comicId).trim()
     const chapterName = (content.chapterName || target.name || chapterRequestId(target)).trim()

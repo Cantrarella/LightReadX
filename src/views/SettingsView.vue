@@ -24,6 +24,8 @@ import AccountCard from '../components/settings/AccountCard.vue'
 import AboutLinks from '../components/settings/AboutLinks.vue'
 import { fetchRemote } from '../services/net'
 import { toast } from '../services/toast'
+import { cacheClear, cacheStats } from '../services/comicPlugin/imageCache'
+import { clearFinished, downloadState, initDownloads } from '../services/comicPlugin/downloadCenter'
 import { errorText, redactUrls } from '../services/errorText'
 import {
   CURRENT_VERSION, RELEASES_URL, REPO_URL, ISSUES_URL,
@@ -409,6 +411,7 @@ const navSections = computed(() => [
   { id: 'reading', label: t('settings.navReading') },
   { id: 'ai', label: t('settings.aiTitle') },
   { id: 'data', label: t('settings.data') },
+  { id: 'storage', label: t('settings.storage') },
   { id: 'network', label: t('settings.network') },
   { id: 'about', label: t('settings.about') },
 ])
@@ -657,6 +660,54 @@ async function doCheckUpdate(manual = true) {
 }
 
 const fmtSize = (bytes: number) => `${(bytes / 1048576).toFixed(0)} MB`
+
+// ---- 存储与缓存 (在线漫画阅读缓存 / 下载记录 / 商店索引) ----
+const cacheInfo = reactive({ count: 0, bytes: 0, ready: false })
+const downloadInfo = reactive({ total: 0, failed: 0, active: 0 })
+
+function fmtCacheSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
+const cacheSizeText = computed(() => fmtCacheSize(cacheInfo.bytes))
+
+function refreshStorageInfo() {
+  initDownloads()
+  downloadInfo.total = downloadState.tasks.length
+  downloadInfo.failed = downloadState.tasks.filter(t => t.status === 'failed' || t.status === 'interrupted').length
+  downloadInfo.active = downloadState.tasks.filter(t => t.status === 'queued' || t.status === 'running').length
+  void cacheStats().then(stats => {
+    cacheInfo.count = stats.count
+    cacheInfo.bytes = stats.bytes
+    cacheInfo.ready = true
+  })
+}
+
+async function clearReaderCache() {
+  await cacheClear()
+  refreshStorageInfo()
+  toast(t('settings.storageCleared'), 'success')
+}
+
+async function clearDownloadRecords() {
+  const ok = await askConfirm(t('settings.storageClearDownloadsConfirm'), {
+    title: t('settings.storageClearDownloads'),
+    confirmLabel: t('settings.storageClear'),
+  })
+  if (!ok) return
+  clearFinished('all')
+  refreshStorageInfo()
+  toast(t('settings.storageCleared'), 'success')
+}
+
+function clearStoreIndex() {
+  try { localStorage.removeItem('lightread.comicStore.cache.v1') } catch { /* 忽略 */ }
+  toast(t('settings.storageCleared'), 'success')
+}
+// 切到「存储」分区才去数一次, 免得每次进设置都扫 IndexedDB
+watch(activeSection, id => { if (id === 'storage') refreshStorageInfo() })
+
 
 async function download(url: string) {
   try {
@@ -1233,6 +1284,34 @@ const APPEARANCE_OPTIONS = [
             {{ t(opt.labelKey) }}
           </button>
         </div>
+      </div>
+    </section>
+
+
+    <!-- 存储: 在线漫画阅读缓存 / 下载记录 / 商店索引 -->
+    <section v-show="showSection('storage')" id="settings-storage" class="card section" aria-labelledby="settings-storage-heading">
+      <h2 id="settings-storage-heading" tabindex="-1">{{ t('settings.storage') }}</h2>
+      <p class="section-desc">{{ t('settings.storageDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageReaderCache') }}</div>
+          <div class="row-desc">{{ t('settings.storageReaderCacheDesc', { count: cacheInfo.count, size: cacheSizeText }) }}</div>
+        </div>
+        <button class="btn" :disabled="!cacheInfo.count" @click="clearReaderCache">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageDownloads') }}</div>
+          <div class="row-desc">{{ t('settings.storageDownloadsDesc', { total: downloadInfo.total, failed: downloadInfo.failed }) }}</div>
+        </div>
+        <button class="btn" :disabled="!downloadInfo.total" @click="clearDownloadRecords">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageStoreIndex') }}</div>
+          <div class="row-desc">{{ t('settings.storageStoreIndexDesc') }}</div>
+        </div>
+        <button class="btn" @click="clearStoreIndex">{{ t('settings.storageClear') }}</button>
       </div>
     </section>
 

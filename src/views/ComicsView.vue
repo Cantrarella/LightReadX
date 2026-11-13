@@ -3,7 +3,7 @@
  * 漫画页: 本地漫画 (CBZ/CBR) 与在线漫画源分开显示。
  * 书籍与漫画共用同一个书库, 只在 UI 层按 format 分流 —— 同步、进度、标注全部沿用。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibrary } from '../stores/library'
 import { importFiles } from '../services/importer'
@@ -23,7 +23,15 @@ import AppModal from '../components/AppModal.vue'
 const router = useRouter()
 const library = useLibrary()
 const keyword = ref('')
-const activeTab = ref<'local' | 'sources'>('local')
+/* 上次停在哪个 tab 记下来: 从别的页面切回「漫画」时不会又跳回本地列表 */
+const TAB_KEY = 'lightread.comics.tab.v1'
+const savedTab = (() => {
+  try { return localStorage.getItem(TAB_KEY) === 'sources' ? 'sources' : 'local' } catch { return 'local' as const }
+})()
+const activeTab = ref<'local' | 'sources'>(savedTab)
+watch(activeTab, value => {
+  try { localStorage.setItem(TAB_KEY, value) } catch { /* 忽略 */ }
+})
 const importing = ref(false)
 const fileInput = ref<HTMLInputElement>()
 const pluginFileInput = ref<HTMLInputElement>()

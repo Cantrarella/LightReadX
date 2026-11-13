@@ -4,29 +4,24 @@
  * → 在线阅读 / 章节下载入库。原「发现」页已并入这里的浏览面板。
  * UI 沿用藏书页与漫画页的卡片、按钮、工具栏语言, 不另起一套视觉。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useLibrary } from '../stores/library'
 import { toast } from '../services/toast'
 import { t } from '../i18n'
 import {
   chapterRequestId, coverUrl, getPlugin, openPlugin, search, detail,
   type ComicPluginHost,
 } from '../services/comicPlugin'
-import {
-  bytesToObjectUrl, cancelDownload, downloadChapterAsCbz, type DownloadProgress,
-} from '../services/comicPlugin/download'
-import {
-  normalizeChapter, type DetailChip, type DetailMetaGroup,
-} from '../services/comicPlugin/normalize'
+import { bytesToObjectUrl } from '../services/comicPlugin/download'
+import { cancel as cancelTask, enqueue, findTask, initDownloads } from '../services/comicPlugin/downloadCenter'
+import type { DetailChip, DetailMetaGroup } from '../services/comicPlugin/normalize'
 import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
 import type {
-  ComicChapter, ComicChapterResult, ComicPaging, ComicSearchItem, ComicInfo, ComicPage,
+  ComicChapter, ComicPaging, ComicSearchItem, ComicInfo,
 } from '../services/comicPlugin/types'
 
 const route = useRoute()
 const router = useRouter()
-const library = useLibrary()
 const uuid = String(route.params.uuid ?? '')
 const plugin = getPlugin(uuid)
 /** 设置页「查看云端收藏」会带 ?tab=cloudFavorite 落到对应 tab */
@@ -51,13 +46,11 @@ const recommend = ref<ComicSearchItem[]>([])
 const stats = reactive({ views: 0, likes: 0, comments: 0 })
 const loadingDetail = ref(false)
 const detailError = ref('')
-const downloads = reactive<Record<string, DownloadProgress>>({})
 
 let coverHost: ComicPluginHost | null = null
 let coverSeq = 0
 
 onBeforeUnmount(() => {
-  closeReader()
   coverObserver?.disconnect()
   coverObserver = null
   coverHost?.dispose()
@@ -160,6 +153,11 @@ function loadMore() {
 async function openDetail(item: ComicSearchItem) {
   view.value = 'detail'
   comicId.value = item.id
+  // 把当前详情写进地址栏: 切到别的页面再回来(或刷新)能直接复原这一部
+  void router.replace({
+    path: route.path,
+    query: { ...route.query, comicId: item.id, title: item.title || '', keyword: undefined },
+  })
   info.value = undefined
   chapters.value = []
   titleMeta.value = []
@@ -197,7 +195,6 @@ async function openDetail(item: ComicSearchItem) {
 
 function backToBrowse() {
   view.value = 'browse'
-  closeReader()
   // 从设置页 / 外部链接带参数进来时, 返回后清掉 query, 避免刷新又跳回详情
   if (route.query.comicId || route.query.keyword || route.query.tab) {
     void router.replace({ path: route.path })
@@ -230,6 +227,7 @@ function goSettings() {
 
 /** 外部链接可带 comicId 直达详情 / keyword 自动搜索 / tab 定位云端收藏 */
 onMounted(() => {
+  initDownloads()
   if (!plugin) return
   const comicIdParam = String(route.query.comicId ?? '')
   if (comicIdParam) {
@@ -244,132 +242,46 @@ onMounted(() => {
   // 其余情况保持 browse, 由 ComicDiscoverPanel 自己拉首页 tab
 })
 
-function taskKey(chapter: ComicChapter) {
-  return `${uuid}:${comicId.value}:${chapterRequestId(chapter)}`
+function taskOf(chapter: ComicChapter) {
+  return findTask(uuid, comicId.value, chapter)
 }
 
-async function download(chapter: ComicChapter) {
-  const key = chapterRequestId(chapter)
-  if (downloads[key]) return
-  downloads[key] = { phase: 'chapter', loaded: 0, total: 0 }
-  const result = await downloadChapterAsCbz(uuid, comicId.value, chapter, {
-    taskGroupKey: taskKey(chapter),
-    onProgress: progress => { downloads[key] = { ...progress } },
+/** 下载统一交给全局下载中心: 进度不随页面销毁, 侧栏「下载」也能看到 */
+function download(chapter: ComicChapter) {
+  const task = enqueue({
+    uuid,
+    comicId: comicId.value,
+    chapter,
+    comicTitle: info.value?.title || comicId.value,
+    cover: coverUrl(info.value?.cover),
   })
-  delete downloads[key]
-  if (result.ok) {
-    await library.refresh()
-    toast(t('comics.downloadSuccess'), 'success')
-  } else if (result.error !== 'cancelled') {
-    toast(result.error ?? t('common.unknownError'), 'error', 6000)
-  }
+  if (task.status === 'done') toast(t('comics.downloadSuccess'), 'success')
 }
 
 function cancel(chapter: ComicChapter) {
-  cancelDownload(taskKey(chapter))
+  const task = taskOf(chapter)
+  if (task) cancelTask(task.id)
 }
 
 function downloadLabel(chapter: ComicChapter): string {
-  const progress = downloads[chapterRequestId(chapter)]
-  if (!progress) return t('comics.download')
-  if (progress.phase === 'images') return `${progress.loaded}/${progress.total}`
-  if (progress.phase === 'packing' || progress.phase === 'importing') return t('comics.packing')
+  const task = taskOf(chapter)
+  if (!task) return t('comics.download')
+  if (task.status === 'done') return t('downloads.open') === '' ? t('comics.download') : t('downloads.groupDone')
+  if (task.status === 'failed' || task.status === 'interrupted') return t('downloads.retry')
+  if (task.phase === 'images' && task.total) return `${task.loaded}/${task.total}`
+  if (task.phase === 'packing' || task.phase === 'importing') return t('comics.packing')
   return t('comics.downloading')
 }
 
-// ---- 在线阅读 ----
-const reader = reactive({
-  open: false,
-  loading: false,
-  chapterName: '',
-  pages: [] as ComicPage[],
-  urls: {} as Record<number, string>,
-  errors: {} as Record<number, boolean>,
-})
-const readerScroll = ref<HTMLElement>()
-const currentChapter = ref<ComicChapter | undefined>()
-let readerHost: ComicPluginHost | null = null
-let observer: IntersectionObserver | null = null
-const loadingPages = new Set<number>()
-const readerKey = computed(() => currentChapter.value ? taskKey(currentChapter.value) : 'reader')
-
-function ensurePage(index: number) {
-  const pageInfo = reader.pages[index]
-  if (!pageInfo || reader.urls[index] || loadingPages.has(index) || !readerHost) return
-  loadingPages.add(index)
-  readerHost.callBytes(
-    'fetchImageBytes',
-    { url: pageInfo.url, taskGroupKey: readerKey.value },
-    { timeoutMs: 60_000 },
-  ).then(bytes => {
-    if (bytes?.length) reader.urls[index] = bytesToObjectUrl(bytes, pageInfo.url)
-    else reader.errors[index] = true
-  }).catch(() => { reader.errors[index] = true })
-    .finally(() => loadingPages.delete(index))
-}
-
-function setupObserver() {
-  observer?.disconnect()
-  observer = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue
-      const index = Number((entry.target as HTMLElement).dataset.pageIndex)
-      ensurePage(index)
-      observer?.unobserve(entry.target)
-    }
-  }, { root: readerScroll.value ?? null, rootMargin: '900px 0px' })
-  readerScroll.value?.querySelectorAll<HTMLElement>('[data-page-index]').forEach(el => observer?.observe(el))
-}
-
-async function openReader(chapter: ComicChapter) {
-  closeReader()
-  currentChapter.value = chapter
-  reader.open = true
-  reader.loading = true
-  reader.chapterName = chapter.name
-  try {
-    readerHost = await openPlugin(uuid, { cancelledGroups: new Set() })
-    const raw = await readerHost.call<ComicChapterResult>(
-      'getChapter',
-      { comicId: comicId.value, chapterId: chapterRequestId(chapter) },
-      { timeoutMs: 60_000 },
-    )
-    const content = normalizeChapter(raw)
-    reader.pages = content.pages
-    reader.chapterName = content.chapterName || chapter.name
-    if (!reader.pages.length) throw new Error(t('comics.noPages'))
-    await nextTick()
-    setupObserver()
-    for (let i = 0; i < Math.min(3, reader.pages.length); i++) ensurePage(i)
-  } catch (e: any) {
-    toast(e?.message ?? t('common.unknownError'), 'error', 6000)
-    closeReader()
-  } finally {
-    reader.loading = false
-  }
-}
-
-function closeReader() {
-  observer?.disconnect()
-  observer = null
-  for (const url of Object.values(reader.urls)) URL.revokeObjectURL(url)
-  reader.urls = {}
-  reader.errors = {}
-  reader.pages = []
-  reader.open = false
-  reader.loading = false
-  loadingPages.clear()
-  readerHost?.dispose()
-  readerHost = null
-}
-
-const chapterIndex = computed(() => chapters.value.findIndex(
-  c => chapterRequestId(c) === (currentChapter.value ? chapterRequestId(currentChapter.value) : ''),
-))
-
-function switchChapter(offset: number) {
-  const next = chapters.value[chapterIndex.value + offset]
-  if (next) void openReader(next)
+// ---- 在线阅读: 跳到独立阅读器页面 (沉浸式外壳, 缩放/章节/进度都在那边) ----
+function openReader(chapter: ComicChapter) {
+  void router.push({
+    path: `/read/comic/${encodeURIComponent(uuid)}/${encodeURIComponent(comicId.value)}/${encodeURIComponent(chapterRequestId(chapter))}`,
+    query: {
+      title: info.value?.title || comicId.value,
+      back: route.fullPath,
+    },
+  })
 }
 </script>
 
@@ -489,10 +401,19 @@ function switchChapter(offset: number) {
           <span class="chapter-name" :title="chapter.name">{{ chapter.name }}</span>
           <div class="spacer" />
           <button class="btn" @click="openReader(chapter)">{{ t('comics.readOnline') }}</button>
-          <button class="btn btn-primary" :disabled="!!downloads[chapterRequestId(chapter)]" @click="download(chapter)">
+          <button
+            class="btn btn-primary"
+            :disabled="taskOf(chapter)?.status === 'queued' || taskOf(chapter)?.status === 'running'"
+            @click="download(chapter)"
+          >
             {{ downloadLabel(chapter) }}
           </button>
-          <button v-if="downloads[chapterRequestId(chapter)]" class="btn btn-ghost" :title="t('comics.cancel')" @click="cancel(chapter)">×</button>
+          <button
+            v-if="taskOf(chapter)?.status === 'queued' || taskOf(chapter)?.status === 'running'"
+            class="btn btn-ghost"
+            :title="t('comics.cancel')"
+            @click="cancel(chapter)"
+          >×</button>
         </div>
       </div>
       <div v-else-if="!loadingDetail && !detailError" class="empty">
@@ -516,37 +437,6 @@ function switchChapter(offset: number) {
       </template>
     </template>
 
-    <!-- 在线阅读 -->
-    <div v-if="reader.open" class="reader-overlay">
-      <header class="reader-bar">
-        <button class="btn btn-ghost" @click="closeReader">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>
-          {{ t('comics.closeReader') }}
-        </button>
-        <span class="reader-title">{{ reader.chapterName }}</span>
-        <div class="spacer" />
-        <span class="count">{{ Object.keys(reader.urls).length }}/{{ reader.pages.length }}</span>
-      </header>
-      <div ref="readerScroll" class="reader-scroll">
-        <p v-if="reader.loading" class="hint loading-hint">{{ t('comics.loadingChapter') }}</p>
-        <div
-          v-for="(pageInfo, index) in reader.pages"
-          :key="pageInfo.id || index"
-          class="reader-page"
-          :data-page-index="index"
-        >
-          <img v-if="reader.urls[index]" :src="reader.urls[index]" :alt="`${index + 1}`" />
-          <div v-else class="reader-placeholder">
-            <span v-if="reader.errors[index]">✕ {{ t('comics.imageFailed') }}</span>
-            <span v-else>{{ index + 1 }}</span>
-          </div>
-        </div>
-        <div v-if="!reader.loading && reader.pages.length" class="reader-nav">
-          <button class="btn" :disabled="chapterIndex <= 0" @click="switchChapter(-1)">{{ t('comics.prevChapter') }}</button>
-          <button class="btn" :disabled="chapterIndex < 0 || chapterIndex >= chapters.length - 1" @click="switchChapter(1)">{{ t('comics.nextChapter') }}</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -656,21 +546,4 @@ function switchChapter(offset: number) {
 .chapter-row .btn { flex: none; white-space: nowrap; }
 
 /* ---- 在线阅读 ---- */
-.reader-overlay {
-  position: fixed; inset: 0; z-index: 100;
-  display: flex; flex-direction: column; background: var(--bg);
-}
-.reader-bar {
-  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
-  border-bottom: 1px solid var(--line); background: var(--surface-1); flex: none;
-}
-.reader-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reader-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 12px 0 40px; }
-.reader-page { width: min(100%, 900px); min-height: 180px; display: flex; justify-content: center; }
-.reader-page img { display: block; width: 100%; height: auto; }
-.reader-placeholder {
-  width: 100%; min-height: 180px; display: grid; place-items: center;
-  color: var(--text-3); font-size: 13px; background: var(--surface-2);
-}
-.reader-nav { display: flex; gap: 12px; padding: 24px 0 8px; }
 </style>
