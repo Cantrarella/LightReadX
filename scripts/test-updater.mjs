@@ -196,7 +196,7 @@ test('slow GitHub metadata falls back to the mirror after 8 s, then retries GitH
   t.mock.timers.tick(1)
   assert.equal(signals[0].aborted, true)
   await settled()
-  assert.match(state.calls[1][0], /^https:\/\/api\.gitcode\.com\/api\/v5\/repos\/langgpt\/LightRead\/releases\?/)
+  assert.match(state.calls[1][0], /^https:\/\/api\.gitcode\.com\/api\/v5\/repos\/Cantrarella\/LightReadX\/releases\?/)
   t.mock.timers.tick(SOURCE_TIMEOUTS.mirror.connect)
   await settled()
   assert.equal(signals[1].aborted, true)
