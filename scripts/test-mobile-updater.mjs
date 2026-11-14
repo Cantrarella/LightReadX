@@ -23,8 +23,8 @@ const hook = registerHooks({ resolve(specifier, context, next) {
 const mobile = await import(mobileUrl), desktop = await import(desktopUrl)
 after(() => hook.deregister())
 const release = (tag, names = [`LightRead_${tag}_android_arm64.apk`, 'SHA256SUMS']) => ({
-  tag_name: tag, assets: names.map(name => ({ name, browser_download_url: `https://github.com/yzfly/LightRead/releases/download/${tag}/${name}`, size: 100 })),
-  body: 'notes', html_url: `https://github.com/yzfly/LightRead/releases/tag/${tag}`,
+  tag_name: tag, assets: names.map(name => ({ name, browser_download_url: `https://github.com/Cantrarella/LightReadX/releases/download/${tag}/${name}`, size: 100 })),
+  body: 'notes', html_url: `https://github.com/Cantrarella/LightReadX/releases/tag/${tag}`,
 })
 beforeEach(() => { store.clear(); calls.length = 0 })
 test('App selects its newest complete stable release, independently of desktop latest', () => {
