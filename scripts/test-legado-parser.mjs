@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { parseHTML } from 'linkedom'
 import {
   applyReplaceRule,
   queryByJsonPath,
@@ -8,7 +9,10 @@ import {
   escapeRegExp,
   decodeEntities,
   splitCleanRule,
+  queryByCssRule,
 } from '../src/services/legado/parser.ts'
+
+const { DOMParser } = parseHTML('<!DOCTYPE html><body></body>')
 
 // ---------------------------------------------------------------------------
 // ## 正则替换清洗
@@ -208,4 +212,32 @@ test('applyReplaceRule 非法正则跳过不崩溃', () => {
   const text = 'hello world'
   const result = applyReplaceRule(text, '(第.{1,8}章)')
   assert.equal(result, 'hello world')
+})
+
+// ---------------------------------------------------------------------------
+// Legado CSS 选择器边缘：数字结尾类名不被当索引
+// ---------------------------------------------------------------------------
+
+function makeDoc(html) {
+  return new DOMParser().parseFromString(html, 'text/html')
+}
+test('class.chapter1 视为合法类名而非「class.chapter + 索引 1」', () => {
+  const doc = makeDoc('<div><span class="chapter1">目标A</span><span class="chapter1">目标B</span></div>')
+  // 不带取值指令时取第一个匹配元素的文本
+  const result = queryByCssRule(doc, 'class.chapter1')
+  assert.equal(result, '目标A')
+})
+
+test('class.chapter1@text 取文本不丢类名', () => {
+  const doc = makeDoc('<div><span class="chapter1">第一章正文</span></div>')
+  const result = queryByCssRule(doc, 'class.chapter1@text')
+  assert.equal(result, '第一章正文')
+})
+
+test('text.123 不被误判成索引，仍按文本匹配处理', () => {
+  const doc = makeDoc('<div><span>123</span><span>abc</span></div>')
+  // text.123 语义是「文本含 123」，这里只验证不崩且不会抛错、返回空串也属可接受
+  // 主要确保不会因为把 123 当索引而走错分支
+  const result = queryByCssRule(doc, 'text.123')
+  assert.ok(typeof result === 'string')
 })

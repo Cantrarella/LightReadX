@@ -5,7 +5,7 @@
  *  - 桌面 (Tauri)：复用 lightread.db（tauri-plugin-sql），加表 book_chapters
  *  - Web：降级 localStorage（数据量小够用）
  *
- * 键：bookKey（书名|作者）+ chapterUrl，正文按章存。
+ * 键：bookKey（书源 URL + 书名 + 作者）+ chapterUrl，正文按章存。
  */
 import { isTauri, getLibraryRoot } from '../../storage/types.ts'
 
@@ -153,9 +153,9 @@ function getBackend(): Promise<ChapterCacheBackend> {
   return ready
 }
 
-/** 由书名|作者生成缓存键 */
-export function chapterCacheKey(name: string, author: string): string {
-  return `${name}|${author}`
+/** 由书源 URL + 书名 + 作者生成缓存键，避免不同源的同名书共用正文缓存。 */
+export function chapterCacheKey(name: string, author: string, sourceUrl: string): string {
+  return JSON.stringify([sourceUrl, name, author])
 }
 
 export async function cacheChapter(bookKey: string, chapter: CachedChapter): Promise<void> {

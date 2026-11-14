@@ -6,8 +6,8 @@
  *  - 换源：通过 MergedSearchBook.sources 切换 source + bookUrl
  */
 import type { BookSource, ChapterItem, ChapterContent, BookSourceEntry } from './types'
-import { getContent, getToc } from './crawler.ts'
-import { cacheChapter, getCachedChapter, listCachedChapters, chapterCacheKey } from './chapterCache.ts'
+import { getFullContent, getToc } from './crawler.ts'
+import { cacheChapter, clearBookCache, getCachedChapter, listCachedChapters, chapterCacheKey } from './chapterCache.ts'
 
 /** 抓取章节正文（缓存优先）。命中缓存直接返回，未命中抓取后写缓存。 */
 export async function getChapterCached(
@@ -16,15 +16,15 @@ export async function getChapterCached(
   author: string,
   chapter: ChapterItem,
 ): Promise<ChapterContent> {
-  const bookKey = chapterCacheKey(bookName, author)
+  const bookKey = chapterCacheKey(bookName, author, source.bookSourceUrl)
   // 先查缓存
   const cached = await getCachedChapter(bookKey, chapter.url)
   if (cached) {
     return { text: cached.text }
   }
-  // 未命中：抓取 + 写缓存
-  const content = await getContent(source, chapter.url)
-  if (content.text) {
+  // 未命中：抓完整章分页后才写缓存；残缺内容只展示、不固化到本地。
+  const content = await getFullContent(source, chapter.url)
+  if (content.text && !content.nextUrl) {
     await cacheChapter(bookKey, {
       name: chapter.name,
       url: chapter.url,
@@ -51,8 +51,13 @@ export async function getTocForEntry(
   }
 }
 
-/** 判断某本书是否已有缓存章节 */
-export async function hasCachedChapters(bookName: string, author: string): Promise<boolean> {
-  const list = await listCachedChapters(chapterCacheKey(bookName, author))
+/** 判断某个书源下的书是否已有缓存章节 */
+export async function hasCachedChapters(source: BookSource, bookName: string, author: string): Promise<boolean> {
+  const list = await listCachedChapters(chapterCacheKey(bookName, author, source.bookSourceUrl))
   return list.length > 0
+}
+
+/** 只清除当前书在当前书源下的正文缓存，不影响其他来源。 */
+export async function clearCachedBook(source: BookSource, bookName: string, author: string): Promise<void> {
+  await clearBookCache(chapterCacheKey(bookName, author, source.bookSourceUrl))
 }

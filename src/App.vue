@@ -190,7 +190,6 @@ const allNavs = [
   { path: '/library', labelKey: 'nav.library', icon: 'M4 3v18M9 3v18M14 4l6 16M3 21h18' },
   { path: '/comics', labelKey: 'nav.comics', icon: 'M3 3h8v10H3zM13 3h8v6h-8zM3 15h8v6H3zM13 11h8v10h-8z' },
   { path: '/catalogs', labelKey: 'nav.catalogs', icon: 'M4 5h16v15H4zM8 2v6M16 2v6M4 10h16M8 14h8' },
-  { path: '/book-sources', labelKey: 'nav.bookSources', icon: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 7v4M12 7v4M16 7v4' },
   { path: '/stats', labelKey: 'nav.stats', icon: 'M4 21V11M10 21V4M16 21V8M22 21H2' },
   { path: '/downloads', labelKey: 'nav.downloads', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3' },
   // 互传: 手机底部标签栏已有 5 个, 不再挤第 6 个 (手机入口在藏书页「导入」菜单与设置页), 见 docs/device-transfer.md

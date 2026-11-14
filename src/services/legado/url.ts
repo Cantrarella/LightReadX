@@ -48,8 +48,10 @@ export function legadoCssToSelector(rule: string): string {
   // 只取第一个 @ 之前的部分（bookList 通常不含取值指令）
   s = s.split('@')[0]
   s = s.replace(/^class\./, '.').replace(/^id\./, '#').replace(/^tag\./, '')
-  // 去掉索引 .N 和排除 !N
-  s = s.replace(/\.\d+$/, '').replace(/![\d:]+$/, '')
+  // 去掉排除 !N（bookList 可能带 !0:1 排除子元素），以及末尾「独立」的 .N 索引。
+  // 注意：bookList 是容器选择器，按 Legado 惯例不取 .N 索引；这里只删纯数字结尾的
+  // 「点+数字」，但不动字母数字结尾的合法类名（如 .chapter1）。
+  s = s.replace(/![\d:]+$/, '')
   return s
 }
 

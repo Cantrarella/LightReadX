@@ -254,7 +254,6 @@ export default {
   'comics.homeLoading': '正在加载推荐…',
   'comics.homeEmpty': '暂时没有推荐内容，试试搜索或去发现页',
   'nav.catalogs': '书源',
-  'nav.bookSources': '书源搜书',
   'nav.stats': '阅读记录',
   'nav.transfer': '互传',
   'nav.settings': '设置',
@@ -2435,7 +2434,7 @@ export default {
   'library.batchDeleteFailed': '已删除 {deleted} 篇，其余论文请重试（{msg}）',
 
   // ---- 书源搜书 (Legado → 搜索 + 在线阅读) ----
-  'bookSource.title': '书源搜书',
+  'bookSource.title': '书源',
   'bookSource.subtitle': '导入 Legado / 阅读3.0 格式的 JSON 书源，搜索并在线阅读网络小说',
   'bookSource.importFile': '导入 JSON 文件',
   'bookSource.orPaste': '或',
@@ -2464,6 +2463,11 @@ export default {
   'bookSource.chapterCount': '共 {count} 章',
   'bookSource.loadingToc': '正在加载目录…',
   'bookSource.tocEmpty': '没有抓到目录（书源规则可能已失效）',
+  'bookSource.clearBookCache': '清除此源缓存',
+  'bookSource.clearingBookCache': '正在清除…',
+  'bookSource.clearBookCacheConfirm': '清除《{name}》在「{source}」下的已缓存正文？',
+  'bookSource.bookCacheCleared': '已清除当前书源的正文缓存',
+  'bookSource.bookCacheClearFailed': '清除缓存失败：{msg}',
   'bookSource.readerBack': '返回目录',
   'bookSource.loadingChapter': '正在加载正文…',
   'bookSource.chapterEmpty': '正文为空（可能需登录或规则失效）',

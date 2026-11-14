@@ -18,6 +18,12 @@ import { fetchRemote } from '../net'
 /** 单次书源请求超时（毫秒）。失效源请求挂起会拖垮多源并发搜索，超时即放弃该源 */
 const SOURCE_TIMEOUT_MS = 10_000
 
+/** 规则解析失败时会留下 `$...` / `{{...}}` 模板原文，不能当作真实书籍字段。 */
+function isResolvedSearchValue(value: string): boolean {
+  const text = value.trim()
+  return Boolean(text) && !text.startsWith('$') && !text.startsWith('{{')
+}
+
 /** 抓取并解析为 HTML Document 或 JSON 对象 */
 async function fetchSource(
   source: BookSource,
@@ -81,11 +87,12 @@ export async function searchSource(
   const results: SearchResultBook[] = []
   for (const el of listElements) {
     const itemCtx = { ...ctx, result: el }
-    const name = strVal(evaluateRule(rule.name, doc, json, itemCtx))
-    const author = strVal(evaluateRule(rule.author, doc, json, itemCtx))
-    const bookUrlRaw = strVal(evaluateRule(rule.bookUrl, doc, json, itemCtx))
+    const name = strVal(evaluateRule(rule.name, doc, json, itemCtx)).trim()
+    const author = strVal(evaluateRule(rule.author, doc, json, itemCtx)).trim()
+    const bookUrlRaw = strVal(evaluateRule(rule.bookUrl, doc, json, itemCtx)).trim()
     const bookUrl = resolveUrl(fullUrl, bookUrlRaw)
-    if (!name || !bookUrl) continue
+    if (!isResolvedSearchValue(name) || (author && !isResolvedSearchValue(author))) continue
+    if (!isResolvedSearchValue(bookUrlRaw) || !bookUrl) continue
 
     results.push({
       name,
@@ -210,6 +217,48 @@ export async function getContent(
   }
 
   return { text, nextUrl }
+}
+
+/** 单章最多抓取的分页数，避免异常书源造成无限请求。 */
+const MAX_CONTENT_PAGES = 30
+
+/**
+ * 抓取一章的完整分页正文。
+ *
+ * 返回的 nextUrl 表示「尚未抓取的下一页」：循环、超过页数上限或后续页失败时保留，
+ * 调用方因此可以展示已抓内容，但不会把残缺正文写入缓存。
+ */
+export async function getFullContent(
+  source: BookSource,
+  chapterUrl: string,
+  maxPages = MAX_CONTENT_PAGES,
+): Promise<ChapterContent> {
+  const texts: string[] = []
+  const visited = new Set<string>()
+  let currentUrl = chapterUrl
+  let nextUrl: string | undefined = chapterUrl
+
+  for (let page = 0; page < Math.max(1, maxPages); page++) {
+    if (visited.has(currentUrl)) break
+    visited.add(currentUrl)
+
+    let content: ChapterContent
+    try {
+      content = await getContent(source, currentUrl)
+    } catch (err) {
+      if (texts.length === 0) throw err
+      console.warn('[book-source] 后续正文页抓取失败，保留已抓内容', err)
+      return { text: texts.join('\n'), nextUrl: currentUrl }
+    }
+
+    if (content.text) texts.push(content.text)
+    nextUrl = content.nextUrl
+    if (!nextUrl) return { text: texts.join('\n') }
+    if (visited.has(nextUrl)) break
+    currentUrl = nextUrl
+  }
+
+  return { text: texts.join('\n'), nextUrl }
 }
 
 /**

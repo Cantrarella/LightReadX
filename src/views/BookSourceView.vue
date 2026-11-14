@@ -8,7 +8,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useBookSourceStore, parseBookSourceJson } from '../stores/bookSource'
 import { searchAllSourcesMerged } from '../services/legado/crawler'
-import { getTocForEntry, getChapterCached } from '../services/legado/reader'
+import { getTocForEntry, getChapterCached, clearCachedBook } from '../services/legado/reader'
 import type { MergedSearchBook, BookSourceEntry, ChapterItem } from '../services/legado/types'
 import { toast } from '../services/toast'
 import { t } from '../i18n'
@@ -20,6 +20,12 @@ const store = useBookSourceStore()
 // ---------------------------------------------------------------------------
 type View = 'search' | 'detail' | 'reader'
 const view = ref<View>('search')
+
+/** 递增令牌：每次异步操作前取一个，回写前校验是否仍是最新，避免过期请求覆盖新视图。 */
+let requestSeq = 0
+function nextToken(): number {
+  return ++requestSeq
+}
 
 // ---------------------------------------------------------------------------
 // 搜索
@@ -36,24 +42,28 @@ async function doSearch() {
     toast(t('bookSource.noSource'), 'info')
     return
   }
+  const token = nextToken()
   searching.value = true
   searchError.value = ''
   results.value = []
   try {
     const merged = await searchAllSourcesMerged(store.enabledSources.map(r => r.source), key)
+    if (token !== requestSeq) return
     results.value = merged
     if (merged.length === 0) {
       toast(t('bookSource.searchEmpty'), 'info')
     }
   } catch (err) {
+    if (token !== requestSeq) return
     searchError.value = String(err)
     toast(t('bookSource.searchError', { msg: String(err) }), 'error')
   } finally {
-    searching.value = false
+    if (token === requestSeq) searching.value = false
   }
 }
 
 function openBook(book: MergedSearchBook) {
+  nextToken()
   currentBook.value = book
   selectedEntry.value = book.primary
   view.value = 'detail'
@@ -71,17 +81,21 @@ const loadingToc = ref(false)
 async function loadToc() {
   const entry = selectedEntry.value
   if (!entry) return
+  const token = nextToken()
   loadingToc.value = true
   chapters.value = []
   try {
-    chapters.value = await getTocForEntry(entry)
-    if (chapters.value.length === 0) {
+    const list = await getTocForEntry(entry)
+    if (token !== requestSeq) return
+    chapters.value = list
+    if (list.length === 0) {
       toast(t('bookSource.tocEmpty'), 'info')
     }
   } catch (err) {
+    if (token !== requestSeq) return
     toast(t('bookSource.tocEmpty'), 'error')
   } finally {
-    loadingToc.value = false
+    if (token === requestSeq) loadingToc.value = false
   }
 }
 
@@ -90,7 +104,31 @@ async function selectEntry(entry: BookSourceEntry) {
   await loadToc()
 }
 
+const clearingCache = ref(false)
+
+async function clearCurrentBookCache() {
+  const entry = selectedEntry.value
+  const book = currentBook.value
+  if (!entry || !book || clearingCache.value) return
+  const confirmed = window.confirm(t('bookSource.clearBookCacheConfirm', {
+    name: book.name,
+    source: entry.sourceName,
+  }))
+  if (!confirmed) return
+
+  clearingCache.value = true
+  try {
+    await clearCachedBook(entry.source, book.name, book.author)
+    toast(t('bookSource.bookCacheCleared'), 'success')
+  } catch (err) {
+    toast(t('bookSource.bookCacheClearFailed', { msg: String(err) }), 'error')
+  } finally {
+    clearingCache.value = false
+  }
+}
+
 function backToSearch() {
+  nextToken()
   view.value = 'search'
 }
 
@@ -108,6 +146,7 @@ async function openChapter(index: number) {
   if (!entry || !book || index < 0 || index >= chapters.value.length) return
   readingIndex.value = index
   view.value = 'reader'
+  const token = nextToken()
   chapterText.value = ''
   loadingChapter.value = true
   try {
@@ -117,16 +156,19 @@ async function openChapter(index: number) {
       book.author,
       chapters.value[index],
     )
+    if (token !== requestSeq) return
     chapterText.value = content.text
   } catch (err) {
+    if (token !== requestSeq) return
     toast(t('bookSource.chapterEmpty'), 'error')
     chapterText.value = ''
   } finally {
-    loadingChapter.value = false
+    if (token === requestSeq) loadingChapter.value = false
   }
 }
 
 function backToToc() {
+  nextToken()
   view.value = 'detail'
 }
 
@@ -330,10 +372,15 @@ function doImport(text: string) {
 
       <!-- 目录 -->
       <section class="card toc-card">
-        <h2 class="card-title">
-          {{ t('bookSource.chapters') }}
-          <span v-if="chapters.length" class="count">{{ t('bookSource.chapterCount', { count: chapters.length }) }}</span>
-        </h2>
+        <div class="toc-title-row">
+          <h2 class="card-title">
+            {{ t('bookSource.chapters') }}
+            <span v-if="chapters.length" class="count">{{ t('bookSource.chapterCount', { count: chapters.length }) }}</span>
+          </h2>
+          <button class="btn btn-sm" :disabled="clearingCache" @click="clearCurrentBookCache">
+            {{ clearingCache ? t('bookSource.clearingBookCache') : t('bookSource.clearBookCache') }}
+          </button>
+        </div>
 
         <div v-if="loadingToc" class="empty">{{ t('bookSource.loadingToc') }}</div>
         <div v-else-if="!chapters.length" class="empty">{{ t('bookSource.tocEmpty') }}</div>
@@ -409,6 +456,21 @@ function doImport(text: string) {
   background: var(--bg-secondary);
   border-radius: 10px;
   padding: 1px 8px;
+}
+
+.toc-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toc-title-row .card-title {
+  margin-bottom: 14px;
+}
+
+.toc-title-row .btn {
+  flex-shrink: 0;
 }
 
 input, textarea {

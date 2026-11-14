@@ -66,62 +66,24 @@ export interface ContentRule {
   payAction?: string | null
 }
 
-/** 发现/分类规则组（ruleExplore） */
-export interface ExploreRule {
-  checkKeyWord?: string | null
-  bookList?: string | null
-  name?: string | null
-  author?: string | null
-  intro?: string | null
-  kind?: string | null
-  lastChapter?: string | null
-  updateTime?: string | null
-  bookUrl?: string | null
-  coverUrl?: string | null
-  wordCount?: string | null
-}
-
-/** 完整书源对象（Legado 标准格式） */
+/** 完整书源对象（Legado 标准格式，仅保留搜索/阅读所需字段） */
 export interface BookSource {
   bookSourceUrl: string
   bookSourceName: string
   bookSourceGroup?: string | null
   bookSourceType?: number
-  bookUrlPattern?: string | null
   customOrder?: number
   enabled?: boolean
-  enabledExplore?: boolean
-  enabledCookieJar?: boolean
-  /** JS 库（供规则脚本共用） */
-  jsLib?: string | null
-  /** 并发限制（每秒请求数） */
-  concurrentRate?: string | null
   /** 请求头（JSON 字符串） */
   header?: string | null
-  loginUrl?: string | null
-  loginUi?: string | null
-  loginCheckJs?: string | null
-  coverDecodeJs?: string | null
   lastUpdateTime?: number
   weight?: number
-  /** 发现页 URL，支持 {{key}}/{{page}} */
-  exploreUrl?: string | null
-  /** 发现页渲染模板 */
-  exploreScreen?: string | null
-  ruleExplore?: ExploreRule
   /** 搜索 URL，支持 {{key}} 关键词、{{page}} 页码 */
   searchUrl?: string | null
   ruleSearch?: SearchRule
   ruleBookInfo?: BookInfoRule
   ruleToc?: TocRule
   ruleContent?: ContentRule
-  ruleReview?: unknown
-  bookSourceComment?: string | null
-  variableComment?: string | null
-  /** 上次响应耗时（ms），书源健康检测用 */
-  respondTime?: number
-  loadWithBaseUrl?: string | null
-  singleUrl?: string | null
 }
 
 /** 搜索结果条目 */
@@ -190,7 +152,7 @@ export interface ChapterItem {
 export interface ChapterContent {
   /** 清洗后的正文文本 */
   text: string
-  /** 下一章 URL（多页正文） */
+  /** 下一页正文 URL；完整抓取时若仍存在，表示正文尚未抓完 */
   nextUrl?: string
 }
 

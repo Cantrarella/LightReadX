@@ -254,7 +254,6 @@ export default {
   'comics.homeLoading': 'Loading recommendations…',
   'comics.homeEmpty': 'No recommendations yet. Try searching or open Discover.',
   'nav.catalogs': "Sources",
-  'nav.bookSources': 'Source Search',
   'nav.stats': "Reading stats",
   'nav.transfer': 'Transfer',
   'nav.settings': 'Settings',
@@ -2435,7 +2434,7 @@ export default {
   'library.batchDeleteFailed': "Deleted {deleted} papers. Try again to delete the rest ({msg})",
 
   // ---- Source search (Legado → search + online reading) ----
-  'bookSource.title': 'Source Search',
+  'bookSource.title': 'Sources',
   'bookSource.subtitle': 'Import Legado / 阅读3.0 JSON book sources to search and read web novels online',
   'bookSource.importFile': 'Import JSON file',
   'bookSource.orPaste': 'or',
@@ -2464,6 +2463,11 @@ export default {
   'bookSource.chapterCount': '{count} chapters',
   'bookSource.loadingToc': 'Loading chapters…',
   'bookSource.tocEmpty': 'No chapters found (source rules may be outdated)',
+  'bookSource.clearBookCache': 'Clear source cache',
+  'bookSource.clearingBookCache': 'Clearing…',
+  'bookSource.clearBookCacheConfirm': 'Clear cached chapters of “{name}” from {source}?',
+  'bookSource.bookCacheCleared': 'Cached chapters cleared for this source',
+  'bookSource.bookCacheClearFailed': 'Could not clear cache: {msg}',
   'bookSource.readerBack': 'Back to chapters',
   'bookSource.loadingChapter': 'Loading content…',
   'bookSource.chapterEmpty': 'Empty content (may require login or outdated rules)',

@@ -73,6 +73,12 @@ test('去掉索引和排除符', () => {
   assert.equal(legadoCssToSelector('class.box_con@tag.dd!0:1:2'), '.box_con')
 })
 
+test('数字结尾的合法类名不被误删（如 class.chapter1）', () => {
+  assert.equal(legadoCssToSelector('class.chapter1'), '.chapter1')
+  assert.equal(legadoCssToSelector('class.list2@tag.a'), '.list2')
+  assert.equal(legadoCssToSelector('id.section3'), '#section3')
+})
+
 // ---------------------------------------------------------------------------
 // strVal
 // ---------------------------------------------------------------------------

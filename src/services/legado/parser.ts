@@ -174,8 +174,11 @@ function parseLegadoCss(rule: string): CssRulePart[] {
     }
 
     // 处理索引 .N（取最后一个 .数字）
+    // 仅当 .数字 是一个「独立 token」时才当索引：
+    //  - class.ch1 里 ch1 的 1 前面是 h，不是点，不受影响
+    //  - text.123 这种纯数字文本匹配会被误判，需排除（.数字 前不是合法选择器前缀）
     const idxMatch = step.match(/\.(\d+)$/)
-    if (idxMatch) {
+    if (idxMatch && !step.startsWith('text.')) {
       index = Number(idxMatch[1])
       step = step.slice(0, -idxMatch[0].length)
     }
