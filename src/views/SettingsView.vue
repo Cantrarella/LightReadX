@@ -24,6 +24,8 @@ import AccountCard from '../components/settings/AccountCard.vue'
 import AboutLinks from '../components/settings/AboutLinks.vue'
 import { fetchRemote } from '../services/net'
 import { toast } from '../services/toast'
+import { cacheClear, cacheStats } from '../services/comicPlugin/imageCache'
+import { clearFinished, downloadState, initDownloads } from '../services/comicPlugin/downloadCenter'
 import { errorText, redactUrls } from '../services/errorText'
 import {
   CURRENT_VERSION, RELEASES_URL, REPO_URL, ISSUES_URL,
@@ -36,12 +38,6 @@ import { bossKeyLabel, shortcutFromEvent, stealthSupported, STEALTH_BG_MIN, STEA
 import { providerById, chatStream } from '../services/ai'
 import AiProviderPicker from '../components/settings/AiProviderPicker.vue'
 import LocalModelPack from '../components/LocalModelPack.vue'
-import {
-  paperAgentRuntimeAvailable,
-  paperAgentEngineStatus,
-  type PaperAgentEngine,
-  type PaperAgentEngineStatus,
-} from '../services/paperAgent.ts'
 
 const settings = useSettings()
 
@@ -414,8 +410,8 @@ const navSections = computed(() => [
   { id: 'features', label: t('settings.features') },
   { id: 'reading', label: t('settings.navReading') },
   { id: 'ai', label: t('settings.aiTitle') },
-  ...(paperAgentRuntimeAvailable() ? [{ id: 'agents', label: t('settings.paperAgentsTitle') }] : []),
   { id: 'data', label: t('settings.data') },
+  { id: 'storage', label: t('settings.storage') },
   { id: 'network', label: t('settings.network') },
   { id: 'about', label: t('settings.about') },
 ])
@@ -466,7 +462,6 @@ function jumpTo(id: string) {
   const el = document.getElementById(`settings-${id}`)
   if (!el) return
   // 默认收起的分区: 跳过去时先展开
-  if (id === 'agents') setAgentsOpen(true)
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   spyLockUntil = Date.now() + (reduce ? 50 : 700)
   setActiveSection(id)
@@ -487,7 +482,6 @@ const phonePage = computed(() => {
 const phonePageTitle = computed(() => navSections.value.find(s => s.id === phonePage.value)?.label ?? '')
 const showSection = (id: string) => !phone.value || phonePage.value === id
 function openPhonePage(id: string) {
-  if (id === 'agents') setAgentsOpen(true)
   void router.push({ query: { ...route.query, page: id } })
 }
 function closePhonePage() {
@@ -525,7 +519,6 @@ onMounted(() => {
   const section = typeof route.query.section === 'string' ? route.query.section : ''
   if (!section || !navSections.value.some(s => s.id === section)) return
   if (phone.value) {
-    if (section === 'agents') setAgentsOpen(true)
     void router.replace({ query: { page: section } })
   } else nextTick(() => jumpTo(section))
 })
@@ -593,7 +586,6 @@ onMounted(async () => {
   doCheckUpdate(false)
   const storage = await getStorage()
   storageKind.value = storage.kind
-  await refreshPaperAgentStatuses()
 })
 
 // ---- AI 助手 ----
@@ -619,91 +611,6 @@ const aiShowBaseUrl = computed(() => {
 const aiPreset = computed(() => providerById(settings.aiProvider))
 const aiNeedsKey = computed(() => aiPreset.value.needsKey || aiPreset.value.id === 'custom')
 const aiDocsUrl = computed(() => providerById(settings.aiProvider).docsUrl ?? '')
-
-const paperAgentEngines: Array<{ id: PaperAgentEngine; label: string }> = [
-  { id: 'pi', label: 'Pi Agent' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude Code' },
-]
-const paperAgentStatuses = ref<Record<PaperAgentEngine, PaperAgentEngineStatus | null>>({
-  codex: null, claude: null, pi: null,
-})
-const checkingPaperAgents = ref(false)
-
-/** 论文 Agent 分区默认收起 (多数人用默认引擎即可); 展开状态记在本机, 读写失败就当收起 */
-const AGENTS_OPEN_KEY = 'lightread-settings-agents-open'
-function readAgentsOpen(): boolean {
-  try {
-    return localStorage.getItem(AGENTS_OPEN_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-const agentsOpen = ref(readAgentsOpen())
-function setAgentsOpen(open: boolean) {
-  agentsOpen.value = open
-  try {
-    if (open) localStorage.setItem(AGENTS_OPEN_KEY, '1')
-    else localStorage.removeItem(AGENTS_OPEN_KEY)
-  } catch { /* 隐私模式等: 只在本次会话里生效 */ }
-}
-
-type AgentState = 'ready' | 'unavailable' | 'checking' | 'unknown'
-function paperAgentState(engine: PaperAgentEngine): AgentState {
-  const status = paperAgentStatuses.value[engine]
-  if (status) return status.compatible && status.authenticated ? 'ready' : 'unavailable'
-  return checkingPaperAgents.value ? 'checking' : 'unknown'
-}
-const AGENT_STATE_KEYS: Record<AgentState, string> = {
-  ready: 'settings.paperAgentsReady',
-  unavailable: 'settings.paperAgentsUnavailable',
-  checking: 'settings.testing',
-  unknown: 'settings.paperAgentsUnchecked',
-}
-/** 原生层的不可用原因是英文诊断; 最常见的「没装」换成本地化说明和下一步 */
-function paperAgentReason(id: PaperAgentEngine): string {
-  const status = paperAgentStatuses.value[id]
-  if (!status) return ''
-  if (!status.found && /executable not found/i.test(status.reason)) return t('settings.paperAgentsNotFound')
-  return status.reason
-}
-/** 收起时标题行右侧的摘要: 当前引擎 + 状态 */
-const agentsSummary = computed(() => {
-  const id = settings.paperAgentEngine
-  const state = paperAgentState(id)
-  return {
-    label: paperAgentEngines.find(e => e.id === id)?.label ?? id,
-    state,
-    text: t(AGENT_STATE_KEYS[state]),
-    reason: state === 'unavailable' ? paperAgentReason(id) : '',
-  }
-})
-
-async function refreshPaperAgentStatuses() {
-  if (!paperAgentRuntimeAvailable() || checkingPaperAgents.value) return
-  checkingPaperAgents.value = true
-  try {
-    const entries = await Promise.all(paperAgentEngines.map(async ({ id }) => [
-      id,
-      await paperAgentEngineStatus(id, settings.paperAgentExecutables[id] || undefined),
-    ] as const))
-    paperAgentStatuses.value = Object.fromEntries(entries) as Record<PaperAgentEngine, PaperAgentEngineStatus>
-  } finally {
-    checkingPaperAgents.value = false
-  }
-}
-
-async function choosePaperAgentExecutable(engine: PaperAgentEngine) {
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const picked = await open({
-    directory: false,
-    multiple: false,
-    title: t('settings.paperAgentsBrowseTitle'),
-  })
-  if (typeof picked !== 'string') return
-  settings.paperAgentExecutables[engine] = picked
-  await refreshPaperAgentStatuses()
-}
 
 async function testAi() {
   if (aiTesting.value) return
@@ -753,6 +660,54 @@ async function doCheckUpdate(manual = true) {
 }
 
 const fmtSize = (bytes: number) => `${(bytes / 1048576).toFixed(0)} MB`
+
+// ---- 存储与缓存 (在线漫画阅读缓存 / 下载记录 / 商店索引) ----
+const cacheInfo = reactive({ count: 0, bytes: 0, ready: false })
+const downloadInfo = reactive({ total: 0, failed: 0, active: 0 })
+
+function fmtCacheSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
+const cacheSizeText = computed(() => fmtCacheSize(cacheInfo.bytes))
+
+function refreshStorageInfo() {
+  initDownloads()
+  downloadInfo.total = downloadState.tasks.length
+  downloadInfo.failed = downloadState.tasks.filter(t => t.status === 'failed' || t.status === 'interrupted').length
+  downloadInfo.active = downloadState.tasks.filter(t => t.status === 'queued' || t.status === 'running').length
+  void cacheStats().then(stats => {
+    cacheInfo.count = stats.count
+    cacheInfo.bytes = stats.bytes
+    cacheInfo.ready = true
+  })
+}
+
+async function clearReaderCache() {
+  await cacheClear()
+  refreshStorageInfo()
+  toast(t('settings.storageCleared'), 'success')
+}
+
+async function clearDownloadRecords() {
+  const ok = await askConfirm(t('settings.storageClearDownloadsConfirm'), {
+    title: t('settings.storageClearDownloads'),
+    confirmLabel: t('settings.storageClear'),
+  })
+  if (!ok) return
+  clearFinished('all')
+  refreshStorageInfo()
+  toast(t('settings.storageCleared'), 'success')
+}
+
+function clearStoreIndex() {
+  try { localStorage.removeItem('lightread.comicStore.cache.v1') } catch { /* 忽略 */ }
+  toast(t('settings.storageCleared'), 'success')
+}
+// 切到「存储」分区才去数一次, 免得每次进设置都扫 IndexedDB
+watch(activeSection, id => { if (id === 'storage') refreshStorageInfo() })
+
 
 async function download(url: string) {
   try {
@@ -855,6 +810,21 @@ async function resetLibraryRoot() {
   settings.libraryRoot = ''
   localStorage.setItem('lightread-settings', JSON.stringify(settings.$state))
   setTimeout(() => location.reload(), 300)
+}
+
+/** 在资源管理器中打开书库文件夹 */
+async function openLibraryFolder() {
+  try {
+    const [{ openPath }, { appDataDir, join }] = await Promise.all([
+      import('@tauri-apps/plugin-opener'),
+      import('@tauri-apps/api/path'),
+    ])
+    const base = settings.libraryRoot || await appDataDir()
+    const books = await join(base, 'books')
+    await openPath(books)
+  } catch (e: any) {
+    toast(failText('settings.openFolderFailed', e), 'error', 5000)
+  }
 }
 
 async function doExport() {
@@ -1021,11 +991,6 @@ const APPEARANCE_OPTIONS = [
           <span class="pl-ico tone-purple" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>
           <span class="pl-text"><span class="pl-title">{{ t('settings.aiTitle') }}</span></span>
           <span class="pl-value">{{ aiProviderLabel }}</span><svg class="pl-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-        </button>
-        <button v-if="paperAgentRuntimeAvailable()" type="button" class="pl-row" @click="openPhonePage('agents')">
-          <span class="pl-ico tone-gray" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H4zM8 20h8M12 16v4M8 9l2 2-2 2M13 13h3"/></svg></span>
-          <span class="pl-text"><span class="pl-title">{{ t('settings.paperAgentsTitle') }}</span></span>
-          <span class="pl-value">{{ agentsSummary.label }}</span><svg class="pl-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
         </button>
       </div>
 
@@ -1337,6 +1302,68 @@ const APPEARANCE_OPTIONS = [
       </div>
     </section>
 
+
+    <!-- 存储: 在线漫画阅读缓存 / 下载记录 / 商店索引 -->
+    <section v-show="showSection('storage')" id="settings-storage" class="card section" aria-labelledby="settings-storage-heading">
+      <h2 id="settings-storage-heading" tabindex="-1">{{ t('settings.storage') }}</h2>
+      <p class="section-desc">{{ t('settings.storageDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageReaderCache') }}</div>
+          <div class="row-desc">{{ t('settings.storageReaderCacheDesc', { count: cacheInfo.count, size: cacheSizeText }) }}</div>
+        </div>
+        <button class="btn" :disabled="!cacheInfo.count" @click="clearReaderCache">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageDownloads') }}</div>
+          <div class="row-desc">{{ t('settings.storageDownloadsDesc', { total: downloadInfo.total, failed: downloadInfo.failed }) }}</div>
+        </div>
+        <button class="btn" :disabled="!downloadInfo.total" @click="clearDownloadRecords">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageStoreIndex') }}</div>
+          <div class="row-desc">{{ t('settings.storageStoreIndexDesc') }}</div>
+        </div>
+        <button class="btn" @click="clearStoreIndex">{{ t('settings.storageClear') }}</button>
+      </div>
+
+      <h3 class="subheading">{{ t('settings.comicDownload') }}</h3>
+      <p class="sub-desc">{{ t('settings.comicDownloadDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicConcurrency') }}</div>
+          <div class="row-desc">{{ t('settings.comicConcurrencyDesc', { n: 8 }) }}<span class="val-badge">{{ settings.comicDownload.concurrency }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.concurrency" class="slider" type="range" min="1" max="16" step="1" :aria-label="t('settings.comicConcurrency')" />
+      </div>
+      <label class="toggle-row">
+        <span class="toggle-text">
+          <span class="row-title">{{ t('settings.comicRest') }}</span>
+          <span class="row-desc">{{ t('settings.comicRestDesc') }}</span>
+        </span>
+        <span class="switch">
+          <input v-model="settings.comicDownload.rest" type="checkbox" role="switch" :aria-label="t('settings.comicRest')" :aria-checked="settings.comicDownload.rest" />
+          <span class="switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestEvery') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restEvery }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restEvery" class="slider" type="range" min="5" max="100" step="5" :aria-label="t('settings.comicRestEvery')" />
+      </div>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestFor') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restFor }}s</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restFor" class="slider" type="range" min="1" max="120" step="1" :aria-label="t('settings.comicRestFor')" />
+      </div>
+    </section>
+
     <!-- 功能: 可选功能开关 (默认关) -->
     <section v-show="showSection('features')" id="settings-features" class="card section" aria-labelledby="settings-features-heading">
       <h2 id="settings-features-heading" tabindex="-1">{{ t('settings.features') }}</h2>
@@ -1525,108 +1552,6 @@ const APPEARANCE_OPTIONS = [
       <LocalModelPack kind="tts" />
     </section>
 
-    <section
-      v-if="paperAgentRuntimeAvailable()"
-      v-show="showSection('agents')"
-      id="settings-agents"
-      class="card section agents-section"
-      :class="{ open: agentsOpen }"
-      aria-labelledby="settings-agents-heading"
-    >
-      <!-- 默认收起: 标题行即开关, 收起时右侧显示当前引擎与状态; 被程序聚焦 (分区导航 / 深链) 时自动展开 -->
-      <h2 id="settings-agents-heading" class="agents-heading" tabindex="-1" @focus="setAgentsOpen(true)">
-        <button
-          type="button"
-          class="agents-toggle"
-          :aria-expanded="agentsOpen"
-          aria-controls="settings-agents-body"
-          @click="setAgentsOpen(!agentsOpen)"
-        >
-          <span class="agents-toggle-title">{{ t('settings.paperAgentsTitle') }}</span>
-          <span
-            class="agents-summary"
-            :class="`is-${agentsSummary.state}`"
-            :title="agentsSummary.reason || undefined"
-          >
-            <span class="agent-dot" aria-hidden="true" />
-            <span class="agents-summary-engine">{{ agentsSummary.label }}</span>
-            <span class="agents-summary-sep" aria-hidden="true">·</span>
-            <span>{{ agentsSummary.text }}</span>
-          </span>
-          <svg class="agents-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
-      </h2>
-      <div id="settings-agents-body" class="agents-body">
-        <div class="agents-body-inner">
-          <div class="row row-inline agents-intro">
-            <div class="row-text">
-              <div class="row-title">{{ t('settings.paperAgentsEngine') }}</div>
-              <div class="row-desc">{{ t('settings.paperAgentsDesc') }}</div>
-            </div>
-            <button type="button" class="btn btn-sm" :disabled="checkingPaperAgents" @click="refreshPaperAgentStatuses">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" :class="{ spinning: checkingPaperAgents }"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
-              {{ checkingPaperAgents ? t('settings.testing') : t('settings.paperAgentsCheck') }}
-            </button>
-          </div>
-
-          <div class="agent-engines" role="radiogroup" :aria-label="t('settings.paperAgentsDefault')">
-            <div
-              v-for="engine in paperAgentEngines"
-              :key="engine.id"
-              class="agent-engine"
-              :class="{ selected: settings.paperAgentEngine === engine.id }"
-            >
-              <label class="agent-engine-head">
-                <input
-                  v-model="settings.paperAgentEngine"
-                  class="agent-radio"
-                  type="radio"
-                  name="paper-agent-engine"
-                  :value="engine.id"
-                />
-                <span class="agent-engine-name">{{ engine.label }}</span>
-                <span v-if="settings.paperAgentEngine === engine.id" class="agent-current">{{ t('settings.paperAgentsCurrent') }}</span>
-                <span class="agent-status" :class="`is-${paperAgentState(engine.id)}`">
-                  <span class="agent-dot" aria-hidden="true" />
-                  {{ t(AGENT_STATE_KEYS[paperAgentState(engine.id)]) }}
-                </span>
-              </label>
-              <div class="agent-path-row">
-                <input
-                  v-model="settings.paperAgentExecutables[engine.id]"
-                  class="input"
-                  spellcheck="false"
-                  autocapitalize="off"
-                  :placeholder="t('settings.paperAgentsPathPlaceholder')"
-                  :aria-label="`${engine.label} · ${t('settings.paperAgentsPathPlaceholder')}`"
-                  @change="refreshPaperAgentStatuses"
-                />
-                <button type="button" class="btn btn-sm" @click="choosePaperAgentExecutable(engine.id)">
-                  {{ t('settings.paperAgentsBrowse') }}
-                </button>
-              </div>
-              <div
-                v-if="paperAgentStatuses[engine.id]?.path || paperAgentState(engine.id) === 'unavailable'"
-                class="agent-engine-meta"
-              >
-                <template v-if="paperAgentStatuses[engine.id]?.path">
-                  <span v-if="paperAgentStatuses[engine.id]?.version" class="agent-version">{{ paperAgentStatuses[engine.id]?.version }}</span>
-                  <code>{{ paperAgentStatuses[engine.id]?.path }}</code>
-                </template>
-                <span v-if="paperAgentState(engine.id) === 'unavailable' && paperAgentReason(engine.id)" class="agent-reason">
-                  {{ paperAgentReason(engine.id) }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <p class="agent-settings-note">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
-            <span>{{ t('settings.paperAgentsNote') }}</span>
-          </p>
-        </div>
-      </div>
-    </section>
 
     <!-- 数据 -->
     <section v-show="showSection('data')" id="settings-data" class="card section" aria-labelledby="settings-data-heading">
@@ -1646,6 +1571,7 @@ const APPEARANCE_OPTIONS = [
           </div>
         </div>
         <div class="row-actions">
+          <button class="btn" :disabled="!!migrating" @click="openLibraryFolder">{{ t('settings.openFolder') }}</button>
           <button class="btn" :disabled="!!migrating" @click="changeLibraryRoot">{{ t('settings.changeLocation') }}</button>
           <button v-if="settings.libraryRoot" class="btn" :disabled="!!migrating" @click="resetLibraryRoot">{{ t('settings.restoreDefault') }}</button>
         </div>
@@ -2112,6 +2038,35 @@ h2:focus {
   font-size: 12px;
   color: var(--brand);
   padding: 0 0 10px;
+}
+
+.subheading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 22px 0 4px;
+}
+.sub-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0 0 6px;
+  line-height: 1.6;
+}
+.val-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.row > .slider {
+  flex-shrink: 0;
+  width: 140px;
+  accent-color: var(--brand);
 }
 
 /* ---- 开关行 ---- */

@@ -40,16 +40,16 @@ const {
 // 更新器在下载/打开链接时才动态导入 Tauri 插件, 钩子需保留到测试结束 (只拦截 updater.ts 的导入)。
 after(() => hook.deregister())
 
-const apk = { name: 'LightRead_v1.4.0_android_arm64.apk', url: 'https://github.com/yzfly/LightRead/releases/download/v1.4.0/app.apk', size: 4096 }
-const dmg = { name: 'LightRead_1.4.0_aarch64.dmg', url: 'https://github.com/yzfly/LightRead/releases/download/v1.4.0/app.dmg', size: 4096 }
+const apk = { name: 'LightRead_v1.4.0_android_arm64.apk', url: 'https://github.com/Cantrarella/LightReadX/releases/download/v1.4.0/app.apk', size: 4096 }
+const dmg = { name: 'LightRead_1.4.0_aarch64.dmg', url: 'https://github.com/Cantrarella/LightReadX/releases/download/v1.4.0/app.dmg', size: 4096 }
 const release = (assets = [apk], version = '1.4.0') => ({
   tag_name: `v${version}`, body: 'Release notes', published_at: '2026-10-03T12:00:00Z',
-  html_url: `https://github.com/yzfly/LightRead/releases/tag/v${version}`,
+  html_url: `https://github.com/Cantrarella/LightReadX/releases/tag/v${version}`,
   assets: assets.map(asset => ({ name: asset.name, browser_download_url: asset.url, size: asset.size })),
 })
 const cached = (assets, at, version = '1.4.0') => {
   state.storage.set('lightread-update-check', JSON.stringify({ at, info: {
-    version, hasUpdate: true, notes: '', publishedAt: '', pageUrl: 'https://github.com/yzfly/LightRead/releases', assets,
+    version, hasUpdate: true, notes: '', publishedAt: '', pageUrl: 'https://github.com/Cantrarella/LightReadX/releases', assets,
   } }))
 }
 const settled = () => new Promise(resolve => setImmediate(resolve))
@@ -196,7 +196,7 @@ test('slow GitHub metadata falls back to the mirror after 8 s, then retries GitH
   t.mock.timers.tick(1)
   assert.equal(signals[0].aborted, true)
   await settled()
-  assert.match(state.calls[1][0], /^https:\/\/api\.gitcode\.com\/api\/v5\/repos\/langgpt\/LightRead\/releases\?/)
+  assert.match(state.calls[1][0], /^https:\/\/api\.gitcode\.com\/api\/v5\/repos\/Cantrarella\/LightReadX\/releases\?/)
   t.mock.timers.tick(SOURCE_TIMEOUTS.mirror.connect)
   await settled()
   assert.equal(signals[1].aborted, true)
@@ -211,8 +211,8 @@ test('slow GitHub metadata falls back to the mirror after 8 s, then retries GitH
 
 // ---- GitCode 镜像回退 ----
 
-const GH_DL = 'https://github.com/yzfly/LightRead/releases/download'
-const GC_DL = 'https://gitcode.com/langgpt/LightRead/releases/download'
+const GH_DL = 'https://github.com/Cantrarella/LightReadX/releases/download'
+const GC_DL = 'https://gitcode.com/Cantrarella/LightReadX/releases/download'
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 const mirrorRelease = (tag, names, extra = {}) => ({
   tag_name: tag, name: `LightRead 轻阅 ${tag}`, prerelease: false, release_status: 'none',
@@ -245,16 +245,16 @@ test('mirror URLs are derived from the GitHub tag and file name', () => {
 })
 
 test('release page links map to GitCode only for this repository', () => {
-  assert.equal(RELEASES_URL, 'https://github.com/yzfly/LightRead/releases')
-  assert.equal(MIRROR_RELEASES_URL, 'https://gitcode.com/langgpt/LightRead/releases')
+  assert.equal(RELEASES_URL, 'https://github.com/Cantrarella/LightReadX/releases')
+  assert.equal(MIRROR_RELEASES_URL, 'https://gitcode.com/Cantrarella/LightReadX/releases')
   for (const link of [RELEASES_URL, `${RELEASES_URL}/`, `${RELEASES_URL}/latest`, `${RELEASES_URL}/tag/v1.8.0`]) {
     assert.equal(mirrorLinkFor(link), MIRROR_RELEASES_URL, link)
   }
   assert.equal(mirrorLinkFor(`${GH_DL}/v1.8.0/x.apk`), `${GC_DL}/v1.8.0/x.apk`)
   assert.equal(mirrorLinkFor(`${GC_DL}/v1.8.0/x.apk`), null)
-  assert.equal(mirrorLinkFor('https://github.com/yzfly/LightRead/issues'), null)
-  assert.equal(mirrorLinkFor('https://github.com/yzfly/LightRead/releasesx'), null)
-  assert.equal(mirrorLinkFor('https://github.com/yzfly/LightRead/blob/main/docs/ambient-sources.md'), null)
+  assert.equal(mirrorLinkFor('https://github.com/Cantrarella/LightReadX/issues'), null)
+  assert.equal(mirrorLinkFor('https://github.com/Cantrarella/LightReadX/releasesx'), null)
+  assert.equal(mirrorLinkFor('https://github.com/Cantrarella/LightReadX/blob/main/docs/ambient-sources.md'), null)
 })
 
 test('download plan tries GitHub fast, then GitCode, then GitHub with the old patience', () => {
@@ -309,8 +309,8 @@ test('GitHub failure falls back to GitCode metadata and release links follow the
   assert.equal(githubUnreachable(), true)
   await openDownload(RELEASES_URL)
   await openDownload(`${GH_DL}/v1.4.0/${apk.name}`)
-  await openDownload('https://github.com/yzfly/LightRead/issues')
-  assert.deepEqual(state.opened, [MIRROR_RELEASES_URL, `${GC_DL}/v1.4.0/${apk.name}`, 'https://github.com/yzfly/LightRead/issues'])
+  await openDownload('https://github.com/Cantrarella/LightReadX/issues')
+  assert.deepEqual(state.opened, [MIRROR_RELEASES_URL, `${GC_DL}/v1.4.0/${apk.name}`, 'https://github.com/Cantrarella/LightReadX/issues'])
 
   // GitHub 恢复后链接回到 GitHub
   state.fetcher = async () => json(release())

@@ -33,7 +33,8 @@ export const SETTINGS_SYNC_SPEC: SettingsSpec = {
   /** 结构版本: 各设备 load() 时自己迁移 */
   version: LOCAL,
   language: SYNC,
-  appearance: SYNC,
+  /** 外观 (浅色/深色/跟随系统) 是设备相关偏好: 电脑深色、手机浅色很常见, 跨设备同步反而会把本机选好的主题盖掉 (2026-11-14 用户反馈主题自动切换) */
+  appearance: LOCAL,
   reader: {
     fontSize: SYNC,
     lineHeight: SYNC,
@@ -106,8 +107,6 @@ export const SETTINGS_SYNC_SPEC: SettingsSpec = {
   /** 摸鱼模式是工作电脑上的需求: 整组只属于本机 (家里的电脑不该一打开书就进摸鱼模式) */
   stealth: LOCAL,
   /** 本机安装的 Agent 引擎与可执行文件路径 */
-  paperAgentEngine: LOCAL,
-  paperAgentExecutables: LOCAL,
   webdavUrl: SYNC,
   webdavUser: SYNC,
   webdavPass: SECRET,
@@ -196,6 +195,10 @@ export const SETTINGS_SYNC_SPEC: SettingsSpec = {
     recommendedBooklists: SYNC,
     transfer: SYNC,
   },
+  /** 漫画下载并发/休息偏好: 各设备网络与性能不同, 只属于本机 */
+  comicDownload: LOCAL,
+  /** 漫画阅读设置 (翻页方向/裁白边/拆分双页): 阅读习惯偏设备, 只属于本机 */
+  comicReader: LOCAL,
 }
 
 function flatten(spec: SettingsSpec, prefix = '', out: Record<string, SettingClass> = {}) {

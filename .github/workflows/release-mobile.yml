@@ -79,12 +79,3 @@ jobs:
           node "$RUNNER_TEMP/check-release.mjs" --platform android --tag "$RELEASE_TAG" --apk "release-assets/$APK_NAME" --cert "$CERT_SHA256"
       - name: Publish App assets without changing desktop latest
         run: gh release edit "$RELEASE_TAG" --draft=false --latest=false --title "${RELEASE_TAG#app-}"
-
-  mirror-gitcode:
-    needs: verify-and-publish
-    permissions:
-      contents: read
-    uses: ./.github/workflows/mirror-gitcode.yml
-    with:
-      tag: ${{ inputs.tag }}
-    secrets: inherit

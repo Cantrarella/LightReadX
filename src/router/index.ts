@@ -6,7 +6,17 @@ export const router = createRouter({
   routes: [
     { path: '/', redirect: '/library' },
     { path: '/library', component: () => import('../views/LibraryView.vue') },
-    { path: '/papers', component: () => import('../views/LibraryView.vue'), meta: { kind: 'paper' } },
+    { path: '/comics', component: () => import('../views/ComicsView.vue') },
+    { path: '/comics/store', component: () => import('../views/ComicStoreView.vue') },
+    { path: '/downloads', component: () => import('../views/DownloadsView.vue') },
+    // 独立发现页已并入漫画源「进入」页, 旧链接/书签保留重定向 (含 ?tab=cloudFavorite)
+    { path: '/comics/discover/:uuid', redirect: to => ({ path: `/comics/source/${to.params.uuid}`, query: to.query }) },
+    { path: '/comics/settings/:uuid', component: () => import('../views/ComicPluginSettingsView.vue') },
+    { path: '/comics/source/:uuid', component: () => import('../views/ComicSourceView.vue') },
+    // 在线漫画阅读走 /read 前缀, 复用沉浸式外壳 (无侧栏, 顶栏自动隐藏)
+    { path: '/read/comic/:uuid/:comicId/:chapterId', component: () => import('../views/ComicReaderView.vue') },
+    // 本地漫画 (CBZ/CBR) 也走漫画阅读器: 能放大、默认单页, 不再用图书 foliate 阅读器
+    { path: '/read/comic-local/:id', component: () => import('../views/ComicReaderView.vue') },
     { path: '/read-paper/:id', component: () => import('../views/PaperReaderView.vue') },
     { path: '/read/:id', component: () => import('../views/ReaderView.vue') },
     // 旧版 /read-pdf 已并入论文阅读器 (PDF 统一引擎)

@@ -8,7 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { AUTHOR_WECHAT, COMMUNITY_BASE, detectPlatform, parseCommunity, parsePlatformReleases, parseWechatContact } from '../src/services/aboutLinks.ts'
 
-const GH = 'https://github.com/yzfly/LightRead/releases/download/'
+const GH = 'https://github.com/Cantrarella/LightReadX/releases/download/'
 const gh = (tag, names, extra = {}) => ({
   tag_name: tag,
   draft: false,
@@ -72,7 +72,7 @@ test('GitCode: only mirrored (SHA256SUMS) releases, URLs rebuilt, sizes from the
   const items = parsePlatformReleases(list, 'gitcode')
   const win = items.find(i => i.platform === 'windows')
   assert.equal(win.version, '2.3.1')
-  assert.equal(win.packages[0].url, 'https://gitcode.com/langgpt/LightRead/releases/download/v2.3.1/LightRead_2.3.1_x64-setup.exe')
+  assert.equal(win.packages[0].url, 'https://gitcode.com/Cantrarella/LightReadX/releases/download/v2.3.1/LightRead_2.3.1_x64-setup.exe')
   assert.equal(win.packages[0].size, 9 * 1048576)
   assert.equal(items.find(i => i.platform === 'mac').packages[0].size, 0)
   assert.equal(items.find(i => i.platform === 'android').version, '2.3.0')

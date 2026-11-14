@@ -1,6 +1,6 @@
 [package]
 name = "lightread"
-version = "2.10.1"
+version = "2.10.3"
 description = "LightRead 轻阅 — 开源本地阅读器"
 authors = ["云中江树"]
 license = "AGPL-3.0-or-later"
@@ -68,7 +68,6 @@ cargo_metadata = { path = "vendor/cargo_metadata" }
 sherpa-onnx = "1.13.3"
 # CBR → CBZ 桌面原生解包 (comic.rs); UnRAR 与前端 node-unrar-js 同源, 许可随包分发
 unrar = "0.5"
-ureq = "2"
 bzip2 = "0.5.2"
 tar = "0.4.46"
 tauri-plugin-single-instance = "2"

@@ -5,7 +5,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
-import BabeldocTaskStatus from './components/BabeldocTaskStatus.vue'
 import LibraryUploadStatus from './components/LibraryUploadStatus.vue'
 import WindowTitleBar from './components/WindowTitleBar.vue'
 import { initWindowChrome, windowChrome } from './services/windowChrome'
@@ -19,6 +18,7 @@ import { startExternalOpen } from './services/externalOpen'
 import { toast } from './services/toast'
 import { requestAutoSync, startAutoSync } from './services/sync'
 import { startTransferPolling, transferState } from './services/transfer'
+import { activeCount, initDownloads } from './services/comicPlugin/downloadCenter'
 import {
   canInAppInstall,
   downloadErrorMessage,
@@ -42,10 +42,23 @@ const router = useRouter()
    不再把设置页 / 阅读记录的滚动偏移带进藏书、书源。同一路径只改查询参数 (设置分区等) 不动 */
 const mainEl = ref<HTMLElement | null>(null)
 const pageScroll = new Map<string, number>()
+/* 漫画这一块是深链 (源 → 详情 → 阅读), 直接切走侧栏再点回来会丢掉上下文。
+   这里记住最后一次停留的漫画地址, 侧栏「漫画」按它回去, 不用从头点一遍插件 */
+const LAST_COMICS_KEY = 'lightread.comics.lastPath'
+const lastComicsPath = ref('/comics')
+try {
+  const saved = localStorage.getItem(LAST_COMICS_KEY)
+  if (saved && saved.startsWith('/comics')) lastComicsPath.value = saved
+} catch { /* 隐私模式下拿不到就算了 */ }
+
 router.beforeEach((to, from) => {
   if (mainEl.value && to.path !== from.path) pageScroll.set(from.path, mainEl.value.scrollTop)
 })
 router.afterEach((to, from) => {
+  if (to.path.startsWith('/comics') && !to.path.startsWith('/comics/settings')) {
+    lastComicsPath.value = to.fullPath
+    try { localStorage.setItem(LAST_COMICS_KEY, to.fullPath) } catch { /* 忽略 */ }
+  }
   if (to.path === from.path) return
   const top = pageScroll.get(to.path) ?? 0
   const restore = () => mainEl.value?.scrollTo({ top })
@@ -124,6 +137,8 @@ async function handleSidebarUpdate() {
 
 onMounted(async () => {
   void initWindowChrome()
+  // 恢复上次没跑完的下载任务 (会被标成「已中断」, 可在下载页重试)
+  initDownloads()
   stopUpdateChecks = watchUpdateAvailability(info => {
     if (updateBusy.value) return
     if (info.version !== updateInfo.value?.version) downloadedInstaller.value = ''
@@ -173,9 +188,10 @@ watch(immersive, (now, before) => {
 
 const allNavs = [
   { path: '/library', labelKey: 'nav.library', icon: 'M4 3v18M9 3v18M14 4l6 16M3 21h18' },
-  { path: '/papers', labelKey: 'nav.papers', icon: 'M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7' },
+  { path: '/comics', labelKey: 'nav.comics', icon: 'M3 3h8v10H3zM13 3h8v6h-8zM3 15h8v6H3zM13 11h8v10h-8z' },
   { path: '/catalogs', labelKey: 'nav.catalogs', icon: 'M4 5h16v15H4zM8 2v6M16 2v6M4 10h16M8 14h8' },
   { path: '/stats', labelKey: 'nav.stats', icon: 'M4 21V11M10 21V4M16 21V8M22 21H2' },
+  { path: '/downloads', labelKey: 'nav.downloads', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3' },
   // 互传: 手机底部标签栏已有 5 个, 不再挤第 6 个 (手机入口在藏书页「导入」菜单与设置页), 见 docs/device-transfer.md
   { path: '/transfer', labelKey: 'nav.transfer', desktopOnly: true, icon: 'M4 7h16m-5-4 5 4-5 4M20 17H4m5-4-5 4 5 4' },
 ]
@@ -209,7 +225,7 @@ const settingsNav = { path: '/settings', labelKey: 'nav.settings', icon: 'M9 3h6
           <router-link
             v-for="n in navs"
             :key="n.path"
-            :to="n.path"
+            :to="n.path === '/comics' ? lastComicsPath : n.path"
             class="nav-item"
             :class="{ 'nav-desktop-only': 'desktopOnly' in n && n.desktopOnly }"
             :title="t(n.labelKey)"
@@ -223,6 +239,11 @@ const settingsNav = { path: '/settings', labelKey: 'nav.settings', icon: 'M9 3h6
               class="nav-badge"
               :aria-label="t('transfer.unread', { n: transferState.unread })"
             >{{ transferState.unread > 99 ? '99+' : transferState.unread }}</span>
+            <span
+              v-else-if="n.path === '/downloads' && activeCount > 0"
+              class="nav-badge"
+              :aria-label="t('downloads.groupActive')"
+            >{{ activeCount > 99 ? '99+' : activeCount }}</span>
           </router-link>
         </nav>
         <div class="sidebar-bottom">
@@ -276,7 +297,6 @@ const settingsNav = { path: '/settings', labelKey: 'nav.settings', icon: 'M9 3h6
       <main ref="mainEl" class="main">
         <router-view :key="route.fullPath" />
       </main>
-      <BabeldocTaskStatus />
       <LibraryUploadStatus />
       <ToastHost />
       <ConfirmHost />

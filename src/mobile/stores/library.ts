@@ -4,7 +4,6 @@ import { getStorage, newId } from '../../storage'
 import { createCoverResolver } from '../../services/coverRepair'
 import { planAutoLink, planListImport, type BooklistEntry } from '../../services/booklists'
 import { recordReading } from '../../services/readingLog.ts'
-import { activeAgentTurn, cleanupAgentPaper, paperAgentRuntimeAvailable, stopAgentTurn } from '../../services/paperAgent.ts'
 import { forgetPdfView } from '../../services/pdfReflow/viewMode'
 
 const resolveCover = createCoverResolver({
@@ -77,19 +76,6 @@ export const useLibrary = defineStore('library', {
     },
     async removeBook(id: string) {
       const storage = await getStorage()
-      const book = this.books.find(item => item.id === id) ?? await storage.getBook(id)
-      // Agent 数据与论文原文件分开存放；先停止并清理，任何失败都保留书库记录供重试。
-      if (paperAgentRuntimeAvailable() && book?.format === 'pdf') {
-        const active = await activeAgentTurn(id)
-        if (active) {
-          try {
-            await stopAgentTurn(id, active.turnId)
-          } catch (error) {
-            if (await activeAgentTurn(id)) throw error
-          }
-        }
-        await cleanupAgentPaper(id)
-      }
       const removed = this.books.find(b => b.id === id)
       await storage.deleteBook(id)
       if (removed?.format === 'pdf') {

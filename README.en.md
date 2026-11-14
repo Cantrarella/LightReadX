@@ -2,7 +2,7 @@
 
 <img src="public/favicon.svg" width="76" alt="LightRead logo" />
 
-# LightRead · Free, open-source ebook reader for every format
+# LightReadX · Free, open-source ebook reader for every format
 
 **Turn your reading list into time well spent.**
 
@@ -10,15 +10,17 @@ EPUB / PDF / MOBI / AZW3 / TXT and more · Key-idea highlighting · Many reading
 
 [中文](README.md) · English
 
-[![Latest release](https://img.shields.io/github/v/release/yzfly/LightRead?display_name=tag&sort=semver)](https://github.com/yzfly/LightRead/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/yzfly/LightRead/total)](https://github.com/yzfly/LightRead/releases)
+[![Latest release](https://img.shields.io/github/v/release/Cantrarella/LightReadX?display_name=tag&sort=semver)](https://github.com/Cantrarella/LightReadX/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Cantrarella/LightReadX/total)](https://github.com/Cantrarella/LightReadX/releases)
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL_v3%2B-blue.svg)](LICENSE)
 
-**[Website](https://code.jiangshu.ai/LightRead/)** · **[Download for desktop](https://code.jiangshu.ai/LightRead/#download)** · **[Download the Android app](https://code.jiangshu.ai/LightRead/download/android)** · [China mirror (GitCode)](https://gitcode.com/langgpt/LightRead/releases) · [User guide (中文)](https://code.jiangshu.ai/LightRead/manual/) · [Feedback](https://github.com/yzfly/LightRead/issues)
+**[Download for desktop](https://github.com/Cantrarella/LightReadX/releases/latest)** · [Download the Android app](https://github.com/Cantrarella/LightReadX/releases?q=app-v&expanded=true) · [User guide (中文)](docs/manual/README.md) · [Feedback](https://github.com/Cantrarella/LightReadX/issues)
 
-Windows · macOS · Linux · Android · Web PWA
+Windows · Android
 
 Free, open source, no ads. Local reading needs no account or internet connection; your books, progress, and notes stay on your device by default.
+
+> **About this project**: LightReadX is a fork of [yzfly/LightRead](https://github.com/yzfly/LightRead). The original author is **江树 / 云中江树 (Jiang Shu)**; many thanks to the upstream author for their open-source work. This fork focuses on **Windows desktop** and **Android app** builds and maintenance, keeping feature parity with upstream.
 
 <img src="docs/screenshots/feature-library.png" width="1000" alt="LightRead local ebook library with cover grid, tags, custom booklists and reading progress" />
 
@@ -30,154 +32,152 @@ Free, open source, no ads. Local reading needs no account or internet connection
 
 | | |
 | --- | --- |
-| What it is | An open-source, local-first reader for ebooks and PDFs: books, research papers, and audio reading in one app |
-| Devices | Windows 10/11, macOS (Apple Silicon and Intel), Linux (deb / rpm / AppImage), Android (arm64), web PWA |
-| Formats | EPUB, PDF, MOBI, AZW, AZW3, FB2, TXT, Markdown, HTML, DjVu, CBZ / CBR comics, plus plain-text files such as source code and logs |
-| Reading modes | Key-idea highlighting (key words and key sentences), typewriter, lyrics, bionic-style word guide, auto page turn and smooth scroll, read-along with text to speech; night, eye-care, e-ink, large-text, and immersive scenes |
-| Layout | Paginated, per-chapter scroll, or continuous scroll across chapters; one or two columns; font size, line height, margins, fonts, and themes; volume-key page turning and PDF reflow on Android |
-| Sync | LightRead account or WebDAV syncs progress, notes, bookmarks, booklists, reading history, and settings; portable library export / import |
-| Cost & privacy | Free, AGPL-3.0; usable without an account; online features are opt-in |
+| What it is | An open-source, local-first ebook and PDF reader: read books, read papers, and listen to books in one app |
+| Platforms | Windows 10 / 11 (64-bit), Android (arm64) |
+| Formats | EPUB, PDF, MOBI, AZW, AZW3, FB2, TXT, Markdown, HTML, DjVu, CBZ / CBR comics, plus plain text like code and logs |
+| Reading modes | Guided reading (key terms / key-sentence highlighting), typewriter, lyric, bionic reading, auto page-turn and steady scroll, follow-along TTS; night, eye-care, e-ink, large-text, and immersive scenes |
+| Typography | Paged / chapter scroll / continuous scroll, single or double column; adjustable font size, line spacing, margins, font, and theme. App supports volume-key page turning and PDF reflow |
+| Multi-device | Sync progress, notes, bookmarks, booklists, reading stats, and settings via a LightRead account or WebDAV; import/export your library archive |
+| Cost & privacy | Free, AGPL-3.0 open source; no account required, network features are opt-in |
 | Not supported | KFX and DRM-protected files |
 
-## Android app
+## Mobile app
 
-The Android app shares the desktop reading engine with an interface designed for phones: bottom tabs, a reachable reader toolbar, and bottom-sheet panels.
+The Android app shares the same reading engine as the desktop app, with a phone-first UI: a bottom tab bar, a one-hand reachable reading toolbar, and bottom drawer panels.
 
-| Library | Reading with highlights | Reading modes | Layout · volume keys |
+| Library | Reading · Guided | Reading modes | Typography · Volume-key turn |
 | --- | --- | --- | --- |
-| <img src="docs/screenshots/app-library.png" width="200" alt="LightRead Android app library with continue-reading card, today's reading time, tags, and cover grid" /> | <img src="docs/screenshots/app-reader.png" width="200" alt="LightRead Android reader highlighting key Chinese words offline" /> | <img src="docs/screenshots/app-reading-modes.png" width="200" alt="LightRead Android reading modes: key-idea highlighting, night, eye care, e-ink, large text, immersive, ambient sound" /> | <img src="docs/screenshots/app-typography.png" width="200" alt="LightRead Android layout panel: paginated, chapter scroll, continuous scroll, progress display, and volume-key page turning" /> |
+| <img src="docs/screenshots/app-library.png" width="200" alt="LightRead Android library: continue-reading card, daily reading time, tag filter, and cover shelf" /> | <img src="docs/screenshots/app-reader.png" width="200" alt="LightRead Android reader: guided reading highlights Chinese key terms offline" /> | <img src="docs/screenshots/app-reading-modes.png" width="200" alt="LightRead Android reading modes: guided, night, eye-care, e-ink, large text, immersive, and ambient sound" /> | <img src="docs/screenshots/app-typography.png" width="200" alt="LightRead Android typography: paged, chapter scroll, continuous scroll, progress, and volume-key page turning" /> |
 
 | Listen | Book sources | Reading stats |
 | --- | --- | --- |
-| <img src="docs/screenshots/app-listen.png" width="200" alt="LightRead Android text to speech with sleep timer, voice, speed, and time remaining" /> | <img src="docs/screenshots/app-sources.png" width="200" alt="LightRead Android book sources: unified search, Project Gutenberg, Internet Archive, arXiv, and private libraries" /> | <img src="docs/screenshots/app-stats.png" width="200" alt="LightRead Android reading stats: daily goal, streak, weekly progress, and reading time" /> |
+| <img src="docs/screenshots/app-listen.png" width="200" alt="LightRead Android listening: sleep timer, voice, speed, and remaining time" /> | <img src="docs/screenshots/app-sources.png" width="200" alt="LightRead Android sources: unified search, Project Gutenberg, Internet Archive, arXiv, and private library" /> | <img src="docs/screenshots/app-stats.png" width="200" alt="LightRead Android stats: daily goal, streak, weekly goals, and reading-time trend" /> |
 
-<sub>App screenshots render the app interface in a phone-sized (390 × 844) browser with demo books and reading history; on a real phone, text to speech defaults to online voices. [Reproduce the screenshots](docs/screenshots/README.md).</sub>
+<sub>App screenshots are rendered from the app UI in a phone-sized (390 × 844) browser; sample books and stats are demo data. On a real device, listening uses online voices by default. [Screenshot reproduction notes](docs/screenshots/README.md)</sub>
 
-## A local library for the books you want to read
+## A local library that keeps your books together
 
-**Drop in a file and start reading.** Organize your collection with covers, tags, booklists, and progress tracking. Research papers have their own library.
+Drag files in and start reading. Organize your collection with a **cover shelf, tags, booklists, and reading progress**; papers have their own entry point, so reading and research each have a home.
 
-Read **EPUB, PDF, MOBI, AZW / AZW3, TXT, and Markdown**, plus FB2, CBZ / CBR comics, DjVu, HTML, and plain-text files such as source code and logs. MOBI, AZW3, FB2, and TXT can also be converted to EPUB. KFX and DRM-protected files are not supported.
+Supports **EPUB, PDF, MOBI, AZW / AZW3, TXT, Markdown**, plus FB2, CBZ / CBR comics, DjVu, HTML, and plain text such as code and logs. MOBI, AZW3, FB2, and TXT can also be converted to EPUB in one click. KFX and DRM-protected files are not supported.
 
-## PDF translation: keep the original in view
+## PDF translation, keep the original in view
 
-**Original on the left. Translation on the right.** Translate a selection or read page-by-page translations alongside the original layout. On desktop, **BabelDOC** can also generate translated or bilingual PDFs.
+**Original on the left, translation on the right.** Word-level translation and page-by-page layout comparison, with annotations as you read. On desktop you can also use **BabelDOC** to produce Chinese or bilingual PDFs.
 
-<img src="docs/screenshots/feature-pdf-translation.png" width="1000" alt="LightRead bilingual PDF reader showing an English document beside its Chinese translation" />
+<img src="docs/screenshots/feature-pdf-translation.png" width="1000" alt="LightRead PDF paper translation: English original on the left and Chinese translation on the right, matched by layout" />
 
-Go deeper with the desktop **paper agent and ten-question workflow**. Explore arguments, methods, and evidence while keeping your own answers separate from AI output. [Paper workflow guide (中文) →](docs/paper-reading.md)
+Want to go deeper? The desktop **Paper Agent and Ten Questions** help you interrogate arguments, methods, and evidence; your answers are kept separately. [Read the paper-reading guide →](docs/paper-reading.md)
 
 <details>
-<summary>Translation and AI requirements</summary>
+<summary>Translation & AI prerequisites</summary>
 
-Selection and page translation use the configured AI service. BabelDOC requires desktop, an additional runtime/model download, and a personal model service configuration. Provider fees may apply. The paper agent requires a separately installed and configured Pi, Codex, or Claude Code engine. Scanned PDFs can be displayed, but text selection and text analysis require a text layer; built-in OCR is not provided.
+Page-by-page and word-level translation use the AI service you configure. BabelDOC is desktop-only, requires installing a runtime environment and model, and needs a personal model service; provider charges may apply. The Paper Agent requires installing and configuring one of Pi, Codex, or Claude Code. Scanned PDFs can be displayed, but text selection and analysis require a text layer; OCR is not currently built in.
 
 </details>
 
-## Guided reading: let the key ideas stand out
+## Guided reading, let the key ideas stand out
 
-**Dianjing (点睛阅读) adds cues to the original text.** Basic mode marks word boundaries or keywords offline. Smart mode uses AI to identify key sentences, concepts, and contextual notes, with chapter summaries, a book outline, and a skim view for review.
+**The basic tier highlights words and key terms offline; the smart tier uses AI to surface key sentences, concepts, and notes.** Catch the thread when reading long texts, and revisit the essentials with chapter summaries, a book-wide outline, and speed reading.
 
-<img src="docs/screenshots/feature-dianjing.png" width="1000" alt="LightRead Dianjing guided reading highlighting keywords directly in an ebook while preserving the full text" />
+<img src="docs/screenshots/feature-dianjing.png" width="1000" alt="LightRead guided reading (basic): key terms are colored in the original text while keeping the full text and layout" />
 
-Basic mode is pictured. Smart mode sends text to the selected AI service after consent. Available for reflowable ebooks such as EPUB and TXT, not PDFs or fixed-layout books. [Guided reading guide (中文) →](docs/manual/05-点睛阅读.md)
+The image shows the basic tier. The smart tier calls AI services after your consent. It works for reflowable books such as EPUB and TXT, and does not yet support PDF or fixed-layout books. [Learn about guided reading →](docs/manual/05-点睛阅读.md)
 
-## Booklists: give your next read a place
+## Booklists, give your next read a place
 
-**Keep books you own and books you still want in the same list.** Add wanted titles, match them automatically when imported, explore curated lists, and export a list to share.
+**Finished, reading, or still looking — put them all in one list.** Supports to-find lists, auto-matching into your library, recommended lists, and export/sharing, so your reading plan has a place to land.
 
-<img src="docs/screenshots/feature-booklists.png" width="1000" alt="LightRead booklists shown as tabs: classics, textbooks, and AI and agents" />
+<img src="docs/screenshots/feature-booklists.png" width="1000" alt="LightRead booklists: classics, textbooks, and AI & agents, switched via tabs" />
 
-## Reading stats: see your reading add up
+## Reading stats, see your reading add up
 
-**Today's minutes. This week's books. The habit you're building.** Track a daily goal, reading streaks, weekly/monthly/yearly trends, and a reading calendar.
+**How long you read today, what you read this week, which book kept you company longest.** Daily goals, streaks, weekly/monthly/yearly trends, and a reading calendar turn scattered reading time into a habit.
 
-<img src="docs/screenshots/feature-reading-stats.png" width="1000" alt="LightRead reading history dashboard with daily goal, reading streak, weekly chart and milestones" />
+<img src="docs/screenshots/feature-reading-stats.png" width="1000" alt="LightRead reading stats: daily goal, streak, weekly time trend, milestones, and per-book progress" />
 
-## Listen & focus: read at your own pace
+## Listen & focus, read at your own pace
 
-**Rest your eyes and let the book speak.** Adjust speech speed, set a sleep timer, and resume where you left off. Try typewriter or lyric modes, automatic paging, ambient audio, and night, eye-care, or large-text presets.
+**Rest your eyes and listen, or switch up how you read when you want to focus.** Listening supports speed control, a sleep timer, and resume where you left off; there are also typewriter, lyric, auto page-turn, ambient sound, and night, eye-care, and large-text scenes.
 
-| Listen to your books | Find a comfortable reading mode |
+| Listen: have books read to you | Reading modes: read at your own pace |
 | --- | --- |
-| [![LightRead text-to-speech controls with voice, speed and sleep timer](docs/screenshots/feature-listen.png)](docs/screenshots/feature-listen.png) | [![LightRead reading modes with guided reading, night, large text and immersive presets](docs/screenshots/feature-reading-modes.png)](docs/screenshots/feature-reading-modes.png) |
+| [![LightRead listening panel: voice, speed, sleep timer, and playback controls](docs/screenshots/feature-listen.png)](docs/screenshots/feature-listen.png) | [![LightRead reading modes: guided, night, eye-care, e-ink, large text, immersive, and follow-along settings](docs/screenshots/feature-reading-modes.png)](docs/screenshots/feature-reading-modes.png) |
 
-Desktop supports online voices, optional downloadable offline models, and system speech. The web version uses system speech. [Speech and ambient audio guide (中文) →](docs/manual/03-声音.md)
+The desktop app supports online voices, downloadable offline models, and system voices; the app uses online or system voices. [Listening & ambient sound →](docs/manual/03-声音.md)
 
-## Book discovery: find something worth opening
+## Public book sources, from "what to read" to reading
 
-**Search books, find papers, and explore curated lists in one place.** Connect Project Gutenberg, Internet Archive, arXiv, OPDS / Calibre catalogs, or a self-hosted library.
+**Search books, find papers, and browse booklists in one place.** Connect to Project Gutenberg, Internet Archive, arXiv, OPDS / Calibre, or your own library.
 
-<img src="docs/screenshots/feature-discovery.png" width="1000" alt="LightRead book discovery with search across public sources, curated reading lists and library connections" />
+<img src="docs/screenshots/feature-discovery.png" width="1000" alt="LightRead public book sources and recommended booklists: unified search, curated lists, OPDS, and private library entry" />
 
-Enable curated booklists in Settings → Features. Availability, access conditions, and permissions depend on each source. [Self-hosted library guide (中文) →](docs/self-hosted-library.md)
+Recommended booklists are enabled in Settings → Features. Availability, download conditions, and licensing of each source are governed by the source. [Self-hosted library guide →](docs/self-hosted-library.md)
 
-## Pick up on another device
+## Continue reading on another device
 
-| What you want to do | How LightRead helps |
+| What you want | What LightRead offers |
 | --- | --- |
-| Continue reading on another device | Optional account sync for progress, notes, bookmarks, booklists, and reading history; import book files separately |
-| Sync the files too | Optional WebDAV file sync through your own cloud storage or NAS |
-| Send text, links, or files | Transfer via your account, WebDAV, or a temporary pickup code |
-| Back up or move your library | Import/export `.okf.zip` library packages; choose a custom storage location on desktop |
-| Return to an idea | Highlights, notes, bookmarks, and in-book search |
+| Continue on phone and computer | LightRead account syncs progress, notes, bookmarks, booklists, and reading stats; book files are imported separately |
+| Sync books too | WebDAV can optionally sync book files, connecting to your own drive or NAS |
+| Send a snippet or a file | Transfer supports account, WebDAV, and temporary pickup-code channels |
+| Back up or move | Import / export a `.okf.zip` library archive; desktop can customize the library location |
+| Keep thoughts in the book | Highlight, annotate, bookmark, in-book search, and return to where you left off |
 
-Local data stays on your device by default. Online sources, speech, AI, and sync connect to their respective services; remote AI receives the relevant text. Library packages exclude app settings, credentials, and agent workspaces. [Sync guide (中文) →](docs/manual/04-使用说明.md#8-多端同步)
+Local data stays on your device by default. Online sources, voices, AI, and sync connect as used; remote AI will receive the relevant text. The library archive does not include app settings, credentials, or the Agent working directory. [Sync & backup notes →](docs/manual/04-使用说明.md#8-多端同步)
 
-## Install
+## Download & install
 
-Desktop and Android are released separately; each channel below always has the latest of both. Installed apps also check for updates in-app.
+Desktop and Android apps are released separately; the latest of each is on GitHub Releases. Installed apps prompt for updates in-app.
 
-| Channel | Link | For |
+| Channel | Address | For |
 | --- | --- | --- |
-| Fixed links on the website | `https://code.jiangshu.ai/LightRead/download/<platform>`: [windows](https://code.jiangshu.ai/LightRead/download/windows) · [mac](https://code.jiangshu.ai/LightRead/download/mac) · [mac-intel](https://code.jiangshu.ai/LightRead/download/mac-intel) · [linux](https://code.jiangshu.ai/LightRead/download/linux) · [linux-deb](https://code.jiangshu.ai/LightRead/download/linux-deb) · [linux-rpm](https://code.jiangshu.ai/LightRead/download/linux-rpm) · [android](https://code.jiangshu.ai/LightRead/download/android) | The link never changes and always serves the newest build; add `?mirror=gitcode` for the China mirror |
-| GitHub Releases · desktop | [github.com/yzfly/LightRead/releases/latest](https://github.com/yzfly/LightRead/releases/latest) | Windows, macOS, Linux |
-| GitHub Releases · Android | [Releases tagged `app-v…`](https://github.com/yzfly/LightRead/releases?q=app-v&expanded=true) | Android phones and tablets |
-| GitCode mirror (China) | [gitcode.com/langgpt/LightRead/releases](https://gitcode.com/langgpt/LightRead/releases) | When GitHub is slow; desktop and Android |
-| In-app update | Settings → About → Check for updates | Installed apps; falls back to the GitCode mirror when GitHub is unreachable |
-| Build from source / web | See "Developers" below | Self-hosting the web PWA or development |
+| GitHub Releases · Desktop | [github.com/Cantrarella/LightReadX/releases/latest](https://github.com/Cantrarella/LightReadX/releases/latest) | Windows |
+| GitHub Releases · Android | [Releases starting with `app-v`](https://github.com/Cantrarella/LightReadX/releases?q=app-v&expanded=true) | Android phones & tablets |
+| In-app update | Settings → About → Check for updates | Installed users |
+| Build from source | See "For developers" below | Self-build or further development |
 
-Pick the file for your device (`x.y.z` is the version):
+Choose the package for your device (`x.y.z` is the version):
 
-| Device | File |
+| Device | Package |
 | --- | --- |
-| Windows 10/11, 64-bit | `LightRead_x.y.z_x64-setup.exe` |
-| macOS, Apple Silicon | `LightRead_x.y.z_aarch64.dmg` |
-| macOS, Intel | `LightRead_x.y.z_x64.dmg` |
-| Ubuntu / Debian | `LightRead_x.y.z_amd64.deb` |
-| Fedora / RHEL | `LightRead-x.y.z-1.x86_64.rpm` |
-| Other Linux | `LightRead_x.y.z_amd64.AppImage` |
-| Android 7.0+, arm64 | `LightRead_app-vx.y.z_android_arm64.apk` |
+| Windows 10 / 11 (64-bit) | `LightRead_x.y.z_x64-setup.exe` |
+| Android 7.0+ (arm64) | `LightRead_app-vx.y.z_android_arm64.apk` |
 
-Every release includes `SHA256SUMS` for verifying downloads. On macOS, open the DMG and drag LightRead into Applications. If blocked, verify the download came from this repository before using the system's **Open Anyway** option. On Windows, run the installer. On Linux, use your package manager or grant execute permission to the AppImage.
+Each release ships a `SHA256SUMS` file you can use to verify downloads. After installing, drag your first book into LightRead to start. [Full install & upgrade guide](docs/installation.md) · [Three-minute start](docs/manual/README.md#三分钟上手)
 
-**Android:** the app is still experimental (package `com.yzfly.lightread.debug`); new versions with the same signature install over the old one. Historical builds used different signing keys. If installation conflicts, keep the old app until you have exported and verified a backup outside its private storage, then follow the [migration guide (中文)](docs/installation.md#android实验性).
+<a id="android-experimental"></a>
+**Android note:** The app is currently experimental (package `com.cantrarella.lightreadx`). A new build with the same signature upgrades in place. Historical builds may use a different signature; if you hit an install conflict, keep the old app, export and verify a backup outside the app directory, then follow the [migration steps](docs/installation.md#android实验性).
 
 <details>
-<summary>Developers: build from source</summary>
+<summary>For developers: run from source</summary>
 
-The web frontend needs Node.js. Desktop development also needs Rust and the platform prerequisites for Tauri 2.
+The desktop app needs Node.js, Rust, and the Tauri 2 build dependencies for your platform.
 
 ```bash
-git clone https://github.com/yzfly/LightRead.git
-cd LightRead
+git clone https://github.com/Cantrarella/LightReadX.git
+cd LightReadX
 npm install
-npm run dev          # Web development
-npm run tauri dev    # Desktop development
+npm run dev          # web development
+npm run tauri dev    # desktop development (Windows)
 ```
 
-Build with `npm run build` (frontend) or `npm run tauri build` (desktop). Built with Vue 3, TypeScript, Tauri 2/Rust, foliate-js, and MuPDF/PDFium. See [CLAUDE.md](CLAUDE.md) for development conventions.
+Build with `npm run build` (frontend) or `npm run tauri build` (desktop). Stack: Vue 3, TypeScript, Tauri 2 / Rust, foliate-js, MuPDF / PDFium. See [CLAUDE.md](CLAUDE.md) for development conventions.
 
 </details>
 
 ## Help make LightRead better
 
-If LightRead earns a place in your reading routine, **[give it a Star](https://github.com/yzfly/LightRead)**. [Feedback](https://github.com/yzfly/LightRead/issues), pull requests, and suggestions for lawfully available book sources are welcome.
+If you like the project, please **[star the upstream yzfly/LightRead](https://github.com/yzfly/LightRead)**; you're also welcome to [file suggestions](https://github.com/Cantrarella/LightReadX/issues) or submit PRs to this fork.
 
-<sub>Screenshots show the real app with Chinese UI. Library contents, reading history, and PDF translations are demo fixtures. Sample books and covers were made for this feature tour and are not bundled with the app. [Reproduce the screenshots](docs/screenshots/README.md).</sub>
+Author: **江树 / 云中江树 (Jiang Shu)** (original author of [yzfly/LightRead](https://github.com/yzfly/LightRead)) · WeChat: **1796060717** (note `LightRead`) · WeChat Official Account: **云中江树**
 
-## License and acknowledgments
+<sub>This page shows real app screenshots; the library, reading stats, and PDF translations use demo data, and the sample books and covers are made for this project and not bundled with the app. [Screenshot reproduction notes](docs/screenshots/README.md)</sub>
 
-[GNU AGPL v3.0 or later](LICENSE). Third-party components retain their respective licenses.
+## License
 
-Thanks to [foliate-js](https://github.com/johnfactotum/foliate-js), [MuPDF](https://mupdf.com/), [PDFium](https://pdfium.googlesource.com/pdfium/), [BabelDOC](https://github.com/funstory-ai/BabelDOC), [jieba](https://github.com/fxsjy/jieba), and [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1).
+[GNU Affero General Public License v3.0 or later](LICENSE)
+
+LightRead uses the AGPL-licensed MuPDF, so the project as a whole is released under AGPL-3.0-or-later. When distributing modified versions or providing modified versions as a network service, you must make the corresponding source code available under the license. This fork keeps the same license as upstream.
+
+Acknowledgements: [foliate-js](https://github.com/johnfactotum/foliate-js) (MIT) · [MuPDF](https://mupdf.com/) (AGPL-3.0-or-later) · [PDFium](https://pdfium.googlesource.com/pdfium/) (BSD-3-Clause) · [BabelDOC](https://github.com/funstory-ai/BabelDOC) · Chinese word lists from the [jieba](https://github.com/fxsjy/jieba) dictionary (MIT) and the [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1) tokenizer vocabulary (MIT)

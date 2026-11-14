@@ -12,6 +12,7 @@ import { IMPORT_FORMATS, planFolderPick, type FolderPlan } from '../services/fol
 import { canPickFolder, loadFolderFile, scanNativePaths, scanFromFileList, scanNativeFolder, useNativeFolderPicker, type FolderFile, type FolderScan } from '../services/folderSource'
 import { nativeDragging, nativeDropQueue } from '../services/nativeDrop'
 import { importFromUrl } from '../services/urlImport'
+import { canScanLibraryLoose, importLibraryLooseFiles } from '../services/libraryScan'
 import { sendBookToDevices } from '../services/transfer'
 import { canConvertToEpub } from '../services/format'
 import { MQ, useMediaQuery } from '../composables/useMediaQuery'
@@ -19,7 +20,7 @@ import { ACCEPT_READABLE } from '../services/plainText'
 import { toast } from '../services/toast'
 import { formatReadingTime } from '../composables/useReadingTimer'
 import { readerPath } from '../services/readerRoute'
-import { paperState, type PaperState } from '../services/paperState'
+import { isComicFormat } from '../services/comicFormat'
 import { loadDaily, localDay, onReadingLogChange } from '../services/readingLog'
 import { weekStartOf } from '../services/readingStats'
 import BookCard from '../components/BookCard.vue'
@@ -33,12 +34,18 @@ import type { BookMeta } from '../storage'
 import { t } from '../i18n'
 import { useSettings } from '../stores/settings'
 
+type PaperState = 'unread' | 'reading' | 'done'
+function paperState(book: { progress?: number; lastReadAt?: number }): PaperState {
+  if ((book.progress ?? 0) >= 0.999) return 'done'
+  return book.progress || book.lastReadAt ? 'reading' : 'unread'
+}
+
 const router = useRouter()
 const route = useRoute()
 const library = useLibrary()
 
 /** /papers 路由复用本视图, 只显示论文 */
-const paperMode = computed(() => route.meta.kind === 'paper')
+const paperMode = computed(() => false)
 const pageKind = computed<'book' | 'paper'>(() => (paperMode.value ? 'paper' : 'book'))
 
 // 路由切换 (藏书 ↔ 论文) 时重置筛选与选择状态
@@ -228,7 +235,7 @@ const allTags = computed(() => {
 
 const anyConvertible = computed(() => kindBooks.value.some(book => canConvertToEpub(book.format)))
 const kindBooks = computed(() =>
-  library.books.filter(b => (b.kind ?? 'book') === pageKind.value))
+  library.books.filter(b => !isComicFormat(b.format)))
 
 const activeBooklist = computed(() =>
   library.booklists.find(item => item.id === activeBooklistId.value))
@@ -451,6 +458,32 @@ async function doUrlImport() {
 // ---- 导入菜单 ----
 const importMenu = ref(false)
 
+// ---- 扫描书库目录散文件 (桌面端) ----
+const scanLibrarySupported = canScanLibraryLoose()
+const scanningLibrary = ref(false)
+
+async function scanLibraryLoose() {
+  importMenu.value = false
+  if (importing.value || scanningLibrary.value) return
+  scanningLibrary.value = true
+  try {
+    const res = await importLibraryLooseFiles()
+    await library.refresh()
+    if (res.imported > 0) {
+      const extra = res.failed.length ? t('library.scanLooseFailed', { n: res.failed.length }) : ''
+      toast(`${t('library.scanLooseImported', { n: res.imported })}${extra}`, res.failed.length ? 'error' : 'success', 5000)
+    } else if (res.failed.length) {
+      toast(t('library.scanLooseFailed', { n: res.failed.length }), 'error', 5000)
+    } else {
+      toast(t('library.scanLooseEmpty'), 'info')
+    }
+  } catch (e: any) {
+    toast(t('library.scanLooseError', { msg: e?.message ?? String(e) }), 'error', 6000)
+  } finally {
+    scanningLibrary.value = false
+  }
+}
+
 // ---- 批量管理 ----
 function toggleManage() {
   manageMode.value = !manageMode.value
@@ -514,21 +547,6 @@ async function togglePin(book: BookMeta) {
   await storage.updateBook(book.id, { pinnedAt })
   book.pinnedAt = pinnedAt || undefined
   toast(pinnedAt ? t('library.pinned') : t('library.unpinned'), 'success')
-}
-
-async function batchMoveKind(ids: Iterable<string> = selectedIds.value) {
-  const target: 'book' | 'paper' = paperMode.value ? 'book' : 'paper'
-  const storage = await (await import('../storage')).getStorage()
-  let count = 0
-  for (const id of ids) {
-    const book = library.books.find(b => b.id === id)
-    if (!book) continue
-    await storage.updateBook(id, { kind: target })
-    book.kind = target
-    count++
-  }
-  toast(t(target === 'paper' ? 'library.movedToPapers' : 'library.movedToBooks', { count }), 'success')
-  selectedIds.value = new Set()
 }
 
 async function batchPin(pin: boolean) {
@@ -935,6 +953,10 @@ async function batchClearTags() {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 11h8M8 15h5"/></svg>
             {{ t('folder.choose') }}
           </button>
+          <button v-if="scanLibrarySupported" role="menuitem" :disabled="scanningLibrary" @click="scanLibraryLoose()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/></svg>
+            {{ scanningLibrary ? t('library.scanLooseRunning') : t('library.scanLoose') }}
+          </button>
           <button role="menuitem" @click="importMenu = false; showUrlModal = true">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10.6 13.4a1 1 0 0 1 0-1.4l2.8-2.8a1 1 0 0 1 1.4 1.4l-2.8 2.8a1 1 0 0 1-1.4 0zM7 17a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 1 1 1.42 1.42L8.4 14.17a1 1 0 0 0 1.42 1.42l2.12-2.12a1 1 0 1 1 1.41 1.41L11.24 17A3 3 0 0 1 7 17zm10-10a3 3 0 0 1 0 4.24l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.12-2.11a1 1 0 0 0-1.42-1.42l-2.12 2.12a1 1 0 0 1-1.41-1.41L12.76 7A3 3 0 0 1 17 7z"/></svg>
             {{ t('library.urlImportTitle') }}
@@ -1273,7 +1295,6 @@ async function batchClearTags() {
         @upload="uploadBooks([book.id])"
         @convert="convertBooks([book.id])"
         @send="sendBookToDevices(book.id)"
-        @move-kind="batchMoveKind([book.id])"
         @toggle-private="setPrivate([book.id], !book.noSync)"
       />
     </div>
@@ -1294,9 +1315,6 @@ async function batchClearTags() {
       </button>
       <button class="btn btn-sm" :disabled="!selectedIds.size" @click="uploadBooks([...selectedIds])">{{ t('library.uploadToCloud') }}</button>
       <button v-if="anyConvertible" class="btn btn-sm" :disabled="!selectedIds.size || !!converting" @click="convertBooks([...selectedIds])">{{ t('book.convertToEpub') }}</button>
-      <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchMoveKind()">
-        {{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}
-      </button>
       <button
         v-if="!paperMode"
         class="btn btn-sm"
@@ -1405,10 +1423,6 @@ async function batchClearTags() {
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('book.convertToEpub') }}</span></span>
         </button>
-        <button class="sheet-row" @click="bookMenuAction(book => batchMoveKind([book.id]))">
-          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/></svg></span>
-          <span class="sheet-text"><span class="sheet-label">{{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}</span></span>
-        </button>
         <button class="sheet-row" @click="bookMenuAction(book => setPrivate([book.id], !book.noSync))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ menuBook.noSync ? t('library.unsetPrivate') : t('library.setPrivate') }}</span><span class="sheet-desc">{{ t('library.privateDesc') }}</span></span>
@@ -1434,10 +1448,6 @@ async function batchClearTags() {
         <button v-if="activeBooklist" class="sheet-row" @click="batchMoreAction(removeSelectedFromBooklist)">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-3.5L5 21V4a1 1 0 0 1 1-1zM9 10h6"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('library.removeFromBooklist') }}</span></span>
-        </button>
-        <button class="sheet-row" @click="batchMoreAction(() => batchMoveKind())">
-          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/></svg></span>
-          <span class="sheet-text"><span class="sheet-label">{{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}</span></span>
         </button>
         <button class="sheet-row" @click="batchMoreAction(() => batchPrivate(!allSelectedPrivate))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg></span>
@@ -1688,7 +1698,7 @@ async function batchClearTags() {
   flex-wrap: wrap;
   margin: 0 calc(-1 * var(--page-x)) 18px;
   /* --chrome-inset-right: Windows 自绘窗口按钮浮在右上角, 吸顶工具栏右侧让开 (styles/main.css) */
-  padding: var(--page-top) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
+  padding: calc(var(--page-top) + 20px) calc(var(--page-x) + var(--chrome-inset-right)) 12px var(--page-x);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
@@ -1769,7 +1779,7 @@ async function batchClearTags() {
   position: relative;
   display: flex;
   align-items: center;
-  width: 260px;
+  width: 320px;
   max-width: 100%;
 }
 .search-icon {
@@ -1780,8 +1790,10 @@ async function batchClearTags() {
 }
 .search {
   width: 100%;
-  padding-left: 34px;
-  padding-right: 30px;
+  /* 与右侧按钮同高: 少了 height 会比「添加书籍」矮一截, 顶栏看着不齐 */
+  height: var(--control-h);
+  padding: 0 30px 0 34px;
+  font-size: 13px;
   /* 与 App 一致: 填充式胶囊搜索框, 聚焦时才出现描边 */
   border-color: transparent;
   border-radius: var(--radius-pill);

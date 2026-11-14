@@ -102,8 +102,6 @@ import {
   type PdfReaderShortcutCommandId,
 } from '../../services/keyboardShortcuts'
 import TocList, { type TocItem } from '../../components/TocList.vue'
-import PaperAgentSidebar from '../../components/PaperAgentSidebar.vue'
-import { paperAgentRuntimeAvailable } from '../../services/paperAgent.ts'
 import { cachedPdfKind, defaultPdfView, pdfOpenView, setPdfViewChoice } from '../../services/pdfReflow/viewMode'
 import { canReflow } from '../../services/pdfReflow/classify'
 import { t } from '../../i18n'
@@ -186,8 +184,8 @@ const isPaper = computed(() => meta.value?.kind === 'paper')
 /** 自动判定的 PDF 类型: 扫描版不能切换为电子书 */
 const pdfKind = ref(cachedPdfKind(bookId))
 const ebookSwitchable = computed(() => canReflow(pdfKind.value))
-const backTarget = computed(() => (isPaper.value ? '/papers' : '/library'))
-const backLabel = computed(() => (isPaper.value ? t('paper.backToPapers') : t('reader.backToLibrary')))
+const backTarget = computed(() => '/library')
+const backLabel = computed(() => t('reader.backToLibrary'))
 /** 幻灯片放映 (整页翻页 + 全屏); 放映时不受竖屏单页滚动约束 */
 const presentationMode = ref(false)
 /**
@@ -2792,8 +2790,8 @@ function mirLayoutNow() {
   })
 }
 
-/** 右栏: 翻译 / 原生 Agent, 点击才展开, 打开论文默认纯 PDF 阅读 */
-const rightTab = ref<'translate' | 'agent' | null>(null)
+/** 右栏: 翻译 (版式对照 / 段落列表), 点击才展开 */
+const rightTab = ref<'translate' | null>(null)
 const translateOpen = computed(() => rightTab.value === 'translate')
 
 /* ---- 分栏拖拽: 右栏宽度可调, 持久化 ---- */
@@ -2820,7 +2818,7 @@ function startSplit(e: PointerEvent) {
   split.addEventListener('pointerup', up)
 }
 
-async function openRight(tab: 'translate' | 'agent') {
+async function openRight(tab: 'translate') {
   if (rightTab.value === tab) return closeRight()
   const wasOpen = rightTab.value !== null
   cancelTranslate()
@@ -3171,11 +3169,6 @@ function copyInstall() {
 /** 页文本 (听书 / AI 上下文) */
 async function pageTextFor(n: number): Promise<string> {
   return pdm ? pdm.pageText(n - 1).replace(/\s+/g, ' ').trim() : ''
-}
-
-/** Agent 快照使用零基页索引，并保留页内换行供全文结构化阅读。 */
-function agentPageText(pageIndex: number): string {
-  return pdm ? pdm.pagePlainText(pageIndex).trim() : ''
 }
 
 /* ---- 自动阅读：翻页模式按页前进，滚动模式连续下移 ---- */
@@ -4023,17 +4016,6 @@ onBeforeUnmount(() => clearTimeout(phoneBarsTimer))
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10.5 3a7.5 7.5 0 1 0 4.55 13.46l3.75 3.75a1 1 0 0 0 1.4-1.42l-3.74-3.74A7.5 7.5 0 0 0 10.5 3zM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0z"/></svg>
           </button>
-          <button
-            v-if="paperAgentRuntimeAvailable()"
-            class="icon-btn"
-            :class="{ 'icon-active': rightTab === 'agent' }"
-            :title="t('paper.agentTitle')"
-            :aria-label="t('paper.agentTitle')"
-            :disabled="!pageCount"
-            @click="closePhoneSheets(); openRight('agent')"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2.5a1 1 0 0 1 .95.69l1.4 4.3a3 3 0 0 0 1.92 1.92l4.3 1.4a1 1 0 0 1 0 1.9l-4.3 1.4a3 3 0 0 0-1.92 1.92l-1.4 4.3a1 1 0 0 1-1.9 0l-1.4-4.3a3 3 0 0 0-1.92-1.92l-4.3-1.4a1 1 0 0 1 0-1.9l4.3-1.4a3 3 0 0 0 1.92-1.92l1.4-4.3A1 1 0 0 1 12 2.5z"/></svg>
-          </button>
           <div class="reader-more-wrap">
             <button
               class="icon-btn"
@@ -4084,22 +4066,10 @@ onBeforeUnmount(() => clearTimeout(phoneBarsTimer))
             >
               {{ t('paper.openTranslate') }}
             </button>
-            <button v-if="paperAgentRuntimeAvailable()" class="btn btn-sm context-action" :class="{ 'btn-active': rightTab === 'agent' }" :disabled="!pageCount" @click="openRight('agent')">
-              {{ t('paper.agentTitle') }}
-            </button>
             <button v-if="bdSupported" class="btn btn-sm context-action" :title="t('paper.bdTooltip')" @click="openBabeldoc">
               {{ t('paper.bdButton') }}
             </button>
           </template>
-          <button
-            v-else-if="paperAgentRuntimeAvailable()"
-            class="btn btn-sm context-action ai-entry"
-            :class="{ 'btn-active': rightTab === 'agent' }"
-            :disabled="!pageCount"
-            @click="openRight('agent')"
-          >
-            ✦ {{ t('paper.agentTitle') }}
-          </button>
           <button class="btn btn-sm change-document" @click="router.push(backTarget)">
             {{ t('reader.changeDocument') }}
           </button>
@@ -4827,19 +4797,7 @@ onBeforeUnmount(() => clearTimeout(phoneBarsTimer))
       <!-- 右: 翻译 (版式对照 / 段落列表) / AI 辅读
            标签切换在顶栏 (再点当前项即关闭), 面板内不再重复一排标签 -->
       <div v-if="rightTab" ref="rightPane" class="pane-right" :style="rightPaneStyle">
-        <PaperAgentSidebar
-          v-if="rightTab === 'agent' && meta"
-          :paper-id="bookId"
-          :meta="meta"
-          :page-count="pageCount"
-          :current-page="currentPage"
-          :selection="selection ? { page: selection.page, text: selection.text } : null"
-          :annotations="annotations"
-          :page-text="agentPageText"
-          @close="closeRight"
-        />
-
-        <div v-else-if="!aiReady" class="rt-body">
+        <div v-if="!aiReady" class="rt-body">
           <div class="chat-head ai-top">
             <strong>{{ t('paper.translationTitle') }}</strong>
             <span style="flex: 1" />

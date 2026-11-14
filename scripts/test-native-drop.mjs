@@ -20,16 +20,6 @@ test('native enter/over/leave update the drop affordance without importing', () 
   assert.deepEqual(nativeDropQueue.value, [])
 })
 
-test('single, batch and mixed folder drops are queued once, preserving batch boundaries', () => {
-  const r = router('/papers')
-  for (const paths of [['/a.pdf'], ['/b.pdf', '/c.epub'], ['/folder', '/d.txt']]) {
-    handleNativeDragDrop({ type: 'drop', paths, position: { x: 1, y: 1 } }, r)
-  }
-  assert.deepEqual(nativeDropQueue.value, [['/a.pdf'], ['/b.pdf', '/c.epub'], ['/folder', '/d.txt']])
-  assert.deepEqual(r.pushed, [])
-  assert.equal(nativeDragging.value, false)
-})
-
 test('dropping over other pages navigates to the library and retains the pending import', () => {
   const r = router('/settings')
   handleNativeDragDrop({ type: 'drop', paths: ['/中文 空格.txt'] }, r)

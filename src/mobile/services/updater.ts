@@ -14,13 +14,13 @@ import { fetchRemote, remoteProxy } from '../../services/net'
 import { t } from '../../i18n'
 import { toast } from './toast'
 
-const REPO = 'yzfly/LightRead'
+const REPO = 'Cantrarella/LightReadX'
 export const RELEASES_URL = `https://github.com/${REPO}/releases`
 export const REPO_URL = `https://github.com/${REPO}`
 export const ISSUES_URL = `https://github.com/${REPO}/issues`
 
 /** GitCode 镜像: 由 .github/workflows/mirror-gitcode.yml 在 GitHub Release 公开后同步并逐个回下载校验 */
-const MIRROR_REPO = 'langgpt/LightRead'
+const MIRROR_REPO = 'Cantrarella/LightReadX'
 export const MIRROR_RELEASES_URL = `https://gitcode.com/${MIRROR_REPO}/releases`
 const MIRROR_API = `https://api.gitcode.com/api/v5/repos/${MIRROR_REPO}`
 const GITHUB_DOWNLOAD_BASE = `${RELEASES_URL}/download/`

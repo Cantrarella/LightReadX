@@ -23,7 +23,7 @@ import { ACCEPT_READABLE } from '../../services/plainText.ts'
 import { toast } from '../../services/toast.ts'
 import { formatReadingTime } from '../../composables/useReadingTimer.ts'
 import { readerPath } from '../../services/readerRoute.ts'
-import { paperState, type PaperState } from '../../services/paperState.ts'
+import { isComicFormat } from '../../services/comicFormat.ts'
 import { loadDaily, localDay, onReadingLogChange } from '../../services/readingLog.ts'
 import BookCard from '../components/BookCard.vue'
 import LibraryUploadDialog from '../../components/LibraryUploadDialog.vue'
@@ -36,12 +36,18 @@ import type { BookMeta } from '../../storage/index.ts'
 import { t } from '../../i18n/index.ts'
 import { useSettings } from '../../stores/settings.ts'
 
+type PaperState = 'unread' | 'reading' | 'done'
+function paperState(book: { progress?: number; lastReadAt?: number }): PaperState {
+  if ((book.progress ?? 0) >= 0.999) return 'done'
+  return book.progress || book.lastReadAt ? 'reading' : 'unread'
+}
+
 const router = useRouter()
 const route = useRoute()
 const library = useLibrary()
 
 /** /papers 路由复用本视图, 只显示论文 */
-const paperMode = computed(() => route.meta.kind === 'paper')
+const paperMode = computed(() => false)
 const pageKind = computed<'book' | 'paper'>(() => (paperMode.value ? 'paper' : 'book'))
 
 // 路由切换 (藏书 ↔ 论文) 时重置筛选与选择状态
@@ -231,7 +237,7 @@ const allTags = computed(() => {
 
 const anyConvertible = computed(() => kindBooks.value.some(book => canConvertToEpub(book.format)))
 const kindBooks = computed(() =>
-  library.books.filter(b => (b.kind ?? 'book') === pageKind.value))
+  library.books.filter(b => !isComicFormat(b.format)))
 
 const activeBooklist = computed(() =>
   library.booklists.find(item => item.id === activeBooklistId.value))
@@ -468,21 +474,6 @@ async function togglePin(book: BookMeta) {
   await storage.updateBook(book.id, { pinnedAt })
   book.pinnedAt = pinnedAt || undefined
   toast(pinnedAt ? t('library.pinned') : t('library.unpinned'), 'success')
-}
-
-async function batchMoveKind(ids: Iterable<string> = selectedIds.value) {
-  const target: 'book' | 'paper' = paperMode.value ? 'book' : 'paper'
-  const storage = await (await import('../../storage/index.ts')).getStorage()
-  let count = 0
-  for (const id of ids) {
-    const book = library.books.find(b => b.id === id)
-    if (!book) continue
-    await storage.updateBook(id, { kind: target })
-    book.kind = target
-    count++
-  }
-  toast(t(target === 'paper' ? 'library.movedToPapers' : 'library.movedToBooks', { count }), 'success')
-  selectedIds.value = new Set()
 }
 
 async function batchPin(pin: boolean) {
@@ -1194,9 +1185,6 @@ async function batchClearTags() {
       </button>
       <button class="btn btn-sm" :disabled="!selectedIds.size" @click="uploadBooks([...selectedIds])">{{ t('library.uploadToCloud') }}</button>
       <button v-if="anyConvertible" class="btn btn-sm" :disabled="!selectedIds.size || !!converting" @click="convertBooks([...selectedIds])">{{ t('book.convertToEpub') }}</button>
-      <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchMoveKind()">
-        {{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}
-      </button>
       <button
         v-if="!paperMode"
         class="btn btn-sm"
@@ -1306,10 +1294,6 @@ async function batchClearTags() {
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('book.convertToEpub') }}</span></span>
         </button>
-        <button class="sheet-row" @click="bookMenuAction(book => batchMoveKind([book.id]))">
-          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/></svg></span>
-          <span class="sheet-text"><span class="sheet-label">{{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}</span></span>
-        </button>
         <button class="sheet-row" @click="bookMenuAction(book => setPrivate([book.id], !book.noSync))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ menuBook.noSync ? t('library.unsetPrivate') : t('library.setPrivate') }}</span><span class="sheet-desc">{{ t('library.privateDesc') }}</span></span>
@@ -1335,10 +1319,6 @@ async function batchClearTags() {
         <button v-if="activeBooklist" class="sheet-row" @click="batchMoreAction(removeSelectedFromBooklist)">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-3.5L5 21V4a1 1 0 0 1 1-1zM9 10h6"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('library.removeFromBooklist') }}</span></span>
-        </button>
-        <button class="sheet-row" @click="batchMoreAction(() => batchMoveKind())">
-          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/></svg></span>
-          <span class="sheet-text"><span class="sheet-label">{{ paperMode ? t('library.moveToBooks') : t('library.moveToPapers') }}</span></span>
         </button>
         <button class="sheet-row" @click="batchMoreAction(() => batchPrivate(!allSelectedPrivate))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg></span>

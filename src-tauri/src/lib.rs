@@ -1,4 +1,3 @@
-mod agent;
 mod app_update;
 mod background_process;
 mod backup_zip;
@@ -86,6 +85,54 @@ fn queue_open_files(app: &tauri::AppHandle, paths: Vec<String>) {
   if let Some(window) = app.get_webview_window("main") {
     let _ = window.show();
     let _ = window.set_focus();
+  }
+}
+
+/// 应用标识符 com.yzfly.lightread → com.cantrarella.lightreadx 后, Windows 数据目录
+/// (Roaming\com.yzfly.lightread) 也跟着变。首次启动新版本时, 若新目录还空、旧目录有
+/// 书库数据库, 就把旧目录的内容整体拷过来, 保证书库 / 封面 / 下载的漫画不丢。
+/// 注意: 登录态 (WebView Cookie) 存在 Local 数据目录, 书库在 Roaming, 两者都要迁移。
+#[cfg(target_os = "windows")]
+fn migrate_legacy_data_dir(app: &tauri::AppHandle) {
+  use tauri::Manager as _;
+
+  // 逐项拷贝: 目录递归, 文件直接 copy
+  fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(src) {
+      let _ = std::fs::create_dir_all(dst);
+      for entry in entries.flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+          copy_recursive(&from, &to);
+        } else if let Err(e) = std::fs::copy(&from, &to) {
+          eprintln!("[migrate] 拷贝 {} 失败: {e}", from.display());
+        }
+      }
+    }
+  }
+
+  // 1) Roaming 数据目录: 书库数据库 / books / covers 等
+  if let Ok(new_dir) = app.path().app_data_dir() {
+    let legacy_dir = new_dir.with_file_name("com.yzfly.lightread");
+    if legacy_dir.exists()
+      && !(new_dir.join("lightread.db").exists() || new_dir.join("books").exists())
+      && (legacy_dir.join("lightread.db").exists() || legacy_dir.join("books").exists())
+    {
+      copy_recursive(&legacy_dir, &new_dir);
+    }
+  }
+
+  // 2) Local 数据目录: WebView Cookie (.cookies / EBWebView) 承载插件登录态
+  if let Ok(new_local) = app.path().app_local_data_dir() {
+    let legacy_local = new_local.with_file_name("com.yzfly.lightread");
+    if legacy_local.exists()
+      // 新 Local 目录已有 Cookie 就视为迁移过, 不覆盖
+      && !new_local.join(".cookies").exists()
+      && (legacy_local.join(".cookies").exists() || legacy_local.join("EBWebView").exists())
+    {
+      copy_recursive(&legacy_local, &new_local);
+    }
   }
 }
 
@@ -183,8 +230,6 @@ pub fn run() {
 
   let app = builder
     .manage(OpenFilesState::default())
-    .manage(agent::ContextState::default())
-    .manage(agent::AgentSupervisor::default())
     .manage(babeldoc::BabeldocState::default())
     .manage(stealth::StealthState::default())
     .invoke_handler(tauri::generate_handler![
@@ -194,22 +239,6 @@ pub fn run() {
       diagnostics::diagnostics_system_info,
       take_open_files,
       read_open_file,
-      agent::context::agent_snapshot_begin,
-      agent::context::agent_snapshot_append_text,
-      agent::context::agent_snapshot_finalize,
-      agent::context::agent_snapshot_abort,
-      agent::context::agent_cleanup_paper,
-      agent::context::agent_workspace_path,
-      agent::supervisor::agent_active_turn,
-      agent::supervisor::agent_replay_events,
-      agent::supervisor::agent_stop_turn,
-      agent::supervisor::agent_respond_interaction,
-      agent::engines::agent_engine_status,
-      agent::engines::agent_start_turn,
-      agent::engines::agent_reset_session,
-      agent::worksheet::agent_worksheet_load,
-      agent::worksheet::agent_worksheet_save_draft,
-      agent::worksheet::agent_worksheet_commit_human,
       cloud_tts::cloud_tts_synthesize,
       edge_tts::edge_tts_synthesize,
       sapi_tts::sapi_tts_voices,
@@ -290,6 +319,10 @@ pub fn run() {
             let _ = std::fs::remove_dir_all(&sw_dir);
           }
         }
+        // 应用标识符从 com.yzfly.lightread 改为 com.cantrarella.lightreadx 后,
+        // 数据目录随之迁移 (Roaming\com.yzfly.lightread → Roaming\com.cantrarella.lightreadx)。
+        // 首次启动时若新目录还空、旧目录有书库, 就把旧目录整体拷过来, 避免书库/封面/下载丢失。
+        migrate_legacy_data_dir(app.handle());
       }
       diagnostics::install(app.handle())?;
       // Windows: 无系统标题栏 + 圆角 (与 macOS 对齐), 超出工作区的窗口缩进来
@@ -305,9 +338,6 @@ pub fn run() {
     .expect("error while building tauri application");
 
   app.run(|app_handle, event| {
-    if matches!(&event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
-      app_handle.state::<agent::AgentSupervisor>().stop_all();
-    }
     // 正常退出时正在朗读不算闪退
     if matches!(&event, tauri::RunEvent::Exit) {
       local_tts::clear_crash_marker_on_exit(app_handle);
