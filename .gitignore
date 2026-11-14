@@ -48,3 +48,6 @@ dist-mobile/
 
 # 项目主页构建产物 (scripts/build-site.mjs)
 site-dist
+
+# WorkBuddy 工作区数据
+.workbuddy/
