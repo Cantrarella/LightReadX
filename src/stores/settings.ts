@@ -130,6 +130,28 @@ export interface FeaturePrefs {
   transfer: boolean
 }
 
+/** 漫画下载偏好: 并发 + 可选「休息防封」 */
+export interface ComicDownloadPrefs {
+  /** 单章内并发下载页数 (1~16, 默认 8 = 全速) */
+  concurrency: number
+  /** 休息/防封开关: 下 N 张后暂停一会儿, 降低被源站限流/封禁的概率 */
+  rest: boolean
+  /** 每下多少张图休息一次 */
+  restEvery: number
+  /** 每次休息多少秒 */
+  restFor: number
+}
+
+/** 漫画阅读偏好 (漫画阅读器「阅读模式」面板, 先做骨架 + 常用项) */
+export interface ComicReaderPrefs {
+  /** 翻页方向: 'ltr' 从左到右 (点击右侧翻下一页), 'rtl' 从右到左 (日漫常见) */
+  direction: 'ltr' | 'rtl'
+  /** 自动裁白边 (骨架阶段仅记录, 渲染裁剪后续补) */
+  trimMargins: boolean
+  /** 竖屏自动拆分双页 */
+  splitDoublePage: boolean
+}
+
 /** 结构版本: 修正历史默认值时递增 */
 const SETTINGS_VERSION = 17
 
@@ -314,6 +336,10 @@ interface SettingsState {
   ambient: AmbientPrefs
   /** 可选功能开关 */
   features: FeaturePrefs
+  /** 漫画下载偏好 */
+  comicDownload: ComicDownloadPrefs
+  /** 漫画阅读偏好 */
+  comicReader: ComicReaderPrefs
 }
 
 const STORAGE_KEY = 'lightread-settings'
@@ -445,6 +471,17 @@ const defaults: SettingsState = {
     recommendedBooklists: false,
     transfer: false,
   },
+  comicDownload: {
+    concurrency: 8,
+    rest: false,
+    restEvery: 30,
+    restFor: 10,
+  },
+  comicReader: {
+    direction: 'ltr',
+    trimMargins: false,
+    splitDoublePage: true,
+  },
 }
 
 /** 默认设置的副本 (设置同步判断「从没改过」、测试检查每项设置都已归类) */
@@ -506,6 +543,14 @@ function load(): SettingsState {
       features: {
         ...defaults.features,
         ...(saved.features && typeof saved.features === 'object' && !Array.isArray(saved.features) ? saved.features : {}),
+      },
+      comicDownload: {
+        ...defaults.comicDownload,
+        ...(saved.comicDownload && typeof saved.comicDownload === 'object' && !Array.isArray(saved.comicDownload) ? saved.comicDownload : {}),
+      },
+      comicReader: {
+        ...defaults.comicReader,
+        ...(saved.comicReader && typeof saved.comicReader === 'object' && !Array.isArray(saved.comicReader) ? saved.comicReader : {}),
       },
       dianjing: {
         ...structuredClone(defaults.dianjing),

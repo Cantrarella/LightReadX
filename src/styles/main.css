@@ -341,7 +341,9 @@ html.lr-chrome .shell:not(.immersive) .main {
 @media (min-width: 721px) {
   html.lr-chrome .shell > .sidebar {
     background: var(--sidebar-bg);
-    padding-top: calc((var(--chrome-band) - var(--control-h)) / 2);
+    /* 品牌与导航整体下移, 让 logo 顶部对齐右侧页面标题 (toolbar 的 padding-top 也是 --page-top + 20px),
+       不再和右上角窗口按钮挤在同一行 (2026-11-14 天哥反馈) */
+    padding-top: calc((var(--chrome-band) - var(--control-h)) / 2 + 20px);
   }
   html.lr-chrome .sidebar > .logo {
     height: var(--control-h);

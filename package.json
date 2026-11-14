@@ -1,7 +1,7 @@
 {
   "name": "lightread",
   "private": true,
-  "version": "2.10.2",
+  "version": "2.10.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -76,7 +76,6 @@
     "test:display-title": "node --experimental-strip-types --test scripts/test-display-title.mjs",
     "test:cover-repair": "node --experimental-strip-types --test scripts/test-cover-repair.mjs",
     "test:about-links": "node --experimental-strip-types --test scripts/test-about-links.mjs",
-    "test:site-links": "node --test scripts/test-site-links.mjs",
     "check:style-tokens": "node scripts/check-style-tokens.mjs",
     "e2e:cover-repair": "node scripts/e2e-cover-repair.mjs",
     "test:key-words": "node --experimental-strip-types --test scripts/test-key-words.mjs",
@@ -120,6 +119,7 @@
     "dexie": "^4.4.4",
     "fflate": "^0.8.3",
     "foliate-js": "^1.0.1",
+    "jspdf": "^4.2.1",
     "marked": "^18.0.5",
     "mupdf": "^1.28.0",
     "node-unrar-js": "^2.0.2",

@@ -39,9 +39,9 @@ test('每个默认设置都已归类 (sync / secret / local), 归类表没有多
   for (const p of [
     'libraryRoot', 'calibrePath', 'customFonts', 'httpProxy', 'corsProxy', 'usageStats', 'syncSettings', 'syncSecrets', 'version', 'webdavSyncAuto',
     'webdavSyncFiles', 'ttsEngine', 'ttsVoice', 'dianjing.perBook', 'dianjing.fiction', 'readingMode.presets',
-    'readingMode.eink', 'readingMode.largeText',
+    'readingMode.eink', 'readingMode.largeText', 'appearance',
   ]) assert.ok(LOCAL_SETTING_PATHS.includes(p), `${p} 应只属于本机`)
-  for (const p of ['reader.theme', 'reader.fontSize', 'appearance', 'language', 'webdavUrl', 'webdavUser',
+  for (const p of ['reader.theme', 'reader.fontSize', 'language', 'webdavUrl', 'webdavUser',
     'webdavProvider', 'aiProvider', 'aiBaseUrl', 'aiModel', 'readingMode.typewriter.cpm', 'ambient.layers',
     'features.recommendedBooklists', 'features.transfer', 'dianjing.level', 'readingMode.wordGuide.enabled',
     'readingMode.wordGuide.intensity', 'readingMode.wordGuide.color', 'readingMode.wordGuide.mark', 'dianjing.density',
@@ -235,9 +235,9 @@ test('端口: 落地同时更新快照与修改时间, 不会被记成本机修�
   const meta = initSettingsMeta(null, readSyncedSettings(state), readSyncedSettings(settingsDefaults()), 1000)
   let saves = 0
   const port = createSettingsSyncPort({ state: () => state, meta, includeSecrets: false, now: () => 2000, onMetaChange: () => saves++ })
-  state.appearance = 'dark' // 同步前一刻的修改 (watch 还没来得及记): read() 补记
+  state.language = 'en' // 同步前一刻的修改 (watch 还没来得及记): read() 补记
   const local = port.read()
-  assert.deepEqual(local.stamps.appearance, { t: 2000 })
+  assert.deepEqual(local.stamps.language, { t: 2000 })
   port.apply([{ path: 'reader.theme', value: 'sepia', stamp: { t: 3000, d: 'B' }, changed: true }])
   assert.equal(state.reader.theme, 'sepia')
   assert.deepEqual(meta.stamps['reader.theme'], { t: 3000, d: 'B' })
@@ -343,7 +343,7 @@ test('按修改时间 LWW: 改得晚的赢, 与谁先同步无关; 不同的键�
   tick()
   edit(A, s => { // A 先改
     s.reader.fontSize = 20
-    s.appearance = 'dark'
+    s.language = 'en'
   })
   tick()
   edit(B, s => { // B 后改
@@ -357,7 +357,7 @@ test('按修改时间 LWW: 改得晚的赢, 与谁先同步无关; 不同的键�
   for (const d of [A, B]) {
     assert.equal(d.settings.reader.fontSize, 26, d.name)
     assert.equal(d.settings.reader.lineHeight, 2.4, d.name)
-    assert.equal(d.settings.appearance, 'dark', d.name)
+    assert.equal(d.settings.language, 'en', d.name)
   }
 })
 

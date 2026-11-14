@@ -1328,6 +1328,40 @@ const APPEARANCE_OPTIONS = [
         </div>
         <button class="btn" @click="clearStoreIndex">{{ t('settings.storageClear') }}</button>
       </div>
+
+      <h3 class="subheading">{{ t('settings.comicDownload') }}</h3>
+      <p class="sub-desc">{{ t('settings.comicDownloadDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicConcurrency') }}</div>
+          <div class="row-desc">{{ t('settings.comicConcurrencyDesc', { n: 8 }) }}<span class="val-badge">{{ settings.comicDownload.concurrency }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.concurrency" class="slider" type="range" min="1" max="16" step="1" :aria-label="t('settings.comicConcurrency')" />
+      </div>
+      <label class="toggle-row">
+        <span class="toggle-text">
+          <span class="row-title">{{ t('settings.comicRest') }}</span>
+          <span class="row-desc">{{ t('settings.comicRestDesc') }}</span>
+        </span>
+        <span class="switch">
+          <input v-model="settings.comicDownload.rest" type="checkbox" role="switch" :aria-label="t('settings.comicRest')" :aria-checked="settings.comicDownload.rest" />
+          <span class="switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestEvery') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restEvery }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restEvery" class="slider" type="range" min="5" max="100" step="5" :aria-label="t('settings.comicRestEvery')" />
+      </div>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestFor') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restFor }}s</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restFor" class="slider" type="range" min="1" max="120" step="1" :aria-label="t('settings.comicRestFor')" />
+      </div>
     </section>
 
     <!-- 功能: 可选功能开关 (默认关) -->
@@ -2004,6 +2038,35 @@ h2:focus {
   font-size: 12px;
   color: var(--brand);
   padding: 0 0 10px;
+}
+
+.subheading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 22px 0 4px;
+}
+.sub-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0 0 6px;
+  line-height: 1.6;
+}
+.val-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.row > .slider {
+  flex-shrink: 0;
+  width: 140px;
+  accent-color: var(--brand);
 }
 
 /* ---- 开关行 ---- */

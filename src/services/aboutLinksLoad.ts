@@ -14,8 +14,8 @@ import {
   type WechatGroup,
 } from './aboutLinks'
 
-const GITHUB_LIST = 'https://api.github.com/repos/yzfly/LightRead/releases?per_page=30'
-const GITCODE_LIST = 'https://api.gitcode.com/api/v5/repos/langgpt/LightRead/releases?per_page=30&direction=desc'
+const GITHUB_LIST = 'https://api.github.com/repos/Cantrarella/LightReadX/releases?per_page=30'
+const GITCODE_LIST = 'https://api.gitcode.com/api/v5/repos/Cantrarella/LightReadX/releases?per_page=30&direction=desc'
 const DOWNLOADS_KEY = 'lightread-about-downloads'
 const COMMUNITY_KEY = 'lightread-about-community'
 const DOWNLOADS_TTL = 6 * 60 * 60 * 1000

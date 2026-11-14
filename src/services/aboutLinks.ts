@@ -28,8 +28,8 @@ export interface PlatformDownload {
 
 export type ReleaseListSource = 'github' | 'gitcode'
 
-const GITHUB_DOWNLOAD_BASE = 'https://github.com/yzfly/LightRead/releases/download/'
-const GITCODE_DOWNLOAD_BASE = 'https://gitcode.com/langgpt/LightRead/releases/download/'
+const GITHUB_DOWNLOAD_BASE = 'https://github.com/Cantrarella/LightReadX/releases/download/'
+const GITCODE_DOWNLOAD_BASE = 'https://gitcode.com/Cantrarella/LightReadX/releases/download/'
 const DESKTOP_TAG = /^v(\d+\.\d+\.\d+)$/
 const APP_TAG = /^(?:app-)?v(\d+\.\d+\.\d+)$/
 const SAFE_NAME = /^[^/\\?#]+$/
