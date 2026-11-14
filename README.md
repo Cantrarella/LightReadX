@@ -2,7 +2,7 @@
 
 <img src="public/favicon.svg" width="76" alt="LightRead 轻阅图标" />
 
-# LightRead 轻阅 · 开源免费的全格式电子书阅读器
+# LightReadX · 开源免费的全格式电子书阅读器
 
 **让想读的书，变成读进去的书。**
 
@@ -10,17 +10,19 @@ EPUB / PDF / MOBI / AZW3 / TXT 全格式 · 点睛阅读 · 多种阅读模式 �
 
 [中文](README.md) · [English](README.en.md)
 
-[![Latest release](https://img.shields.io/github/v/release/yzfly/LightRead?display_name=tag&sort=semver)](https://github.com/yzfly/LightRead/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/yzfly/LightRead/total)](https://github.com/yzfly/LightRead/releases)
+[![Latest release](https://img.shields.io/github/v/release/Cantrarella/LightReadX?display_name=tag&sort=semver)](https://github.com/Cantrarella/LightReadX/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Cantrarella/LightReadX/total)](https://github.com/Cantrarella/LightReadX/releases)
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL_v3%2B-blue.svg)](LICENSE)
 
-**[官网](https://code.jiangshu.ai/LightRead/)** · **[下载桌面版](https://code.jiangshu.ai/LightRead/#download)** · **[下载安卓 App](https://code.jiangshu.ai/LightRead/download/android)** · [国内镜像（GitCode）](https://gitcode.com/langgpt/LightRead/releases) · [使用手册](https://code.jiangshu.ai/LightRead/manual/) · [反馈建议](https://github.com/yzfly/LightRead/issues)
+**[下载桌面版](https://github.com/Cantrarella/LightReadX/releases/latest)** · [下载安卓 App](https://github.com/Cantrarella/LightReadX/releases?q=app-v&expanded=true) · [使用手册](docs/manual/README.md) · [反馈建议](https://github.com/Cantrarella/LightReadX/issues)
 
-Windows · macOS · Linux · Android · 网页 PWA
+Windows · Android
 
 免费、开源、无广告。本地阅读无需账号、无需联网；藏书、进度与笔记默认留在自己的设备上。
 
-<img src="docs/screenshots/feature-library.png" width="1000" alt="LightRead 轻阅本地电子书书库：封面书架、分类标签、自建书单与每本书的阅读进度" />
+> **关于本项目**：LightReadX 是 [yzfly/LightRead](https://github.com/yzfly/LightRead) 的一个 fork。原作者为 **江树 / 云中江树**，在此向原作者的开源工作致谢。本 fork 主要面向 **Windows 桌面版** 与 **Android App** 的维护与自用构建，功能与上游保持一致。
+
+<img src="docs/screenshots/feature-library.png" width="1000" alt="LightRead 本地电子书书库：封面书架、分类标签、自建书单与每本书的阅读进度" />
 
 </div>
 
@@ -31,7 +33,7 @@ Windows · macOS · Linux · Android · 网页 PWA
 | | |
 | --- | --- |
 | 是什么 | 开源、本地优先的电子书与 PDF 阅读器，读书、读论文、听书都在一个应用里 |
-| 支持设备 | Windows 10 / 11、macOS（Apple 芯片与 Intel）、Linux（deb / rpm / AppImage）、Android（arm64）、网页 PWA |
+| 支持设备 | Windows 10 / 11（64 位）、Android（arm64） |
 | 支持格式 | EPUB、PDF、MOBI、AZW、AZW3、FB2、TXT、Markdown、HTML、DjVu、CBZ / CBR 漫画，以及代码、日志等纯文本文件 |
 | 阅读模式 | 点睛阅读（重点词 / 要句标记）、打字机、歌词、仿生阅读、自动翻页与匀速滚动、听书跟读；夜读、护眼、墨水屏、大字、沉浸场景 |
 | 排版 | 翻页 / 按章滚动 / 跨章连续滚动，单栏 / 双栏，字号、行距、边距、字体、主题随手调；App 支持音量键翻页、PDF 重排 |
@@ -102,7 +104,7 @@ Windows · macOS · Linux · Android · 网页 PWA
 | --- | --- |
 | [![轻阅听书面板：语音、语速、定时关闭与朗读控制](docs/screenshots/feature-listen.png)](docs/screenshots/feature-listen.png) | [![轻阅阅读模式：点睛阅读、夜读、护眼、墨水屏、大字、沉浸与带读设置](docs/screenshots/feature-reading-modes.png)](docs/screenshots/feature-reading-modes.png) |
 
-桌面端支持在线语音、可下载的离线模型与系统语音；网页版使用系统语音。[听书与背景音 →](docs/manual/03-声音.md)
+桌面端支持在线语音、可下载的离线模型与系统语音；App 使用在线语音或系统语音。[听书与背景音 →](docs/manual/03-声音.md)
 
 ## 公开书源，从「想读什么」到开始阅读
 
@@ -126,45 +128,38 @@ Windows · macOS · Linux · Android · 网页 PWA
 
 ## 下载与安装
 
-桌面版和安卓 App 分开发版，各自的最新版都在下面的渠道里。已安装的应用会在应用内提示更新。
+桌面版和安卓 App 分开发版，各自的最新版都在 GitHub Releases。已安装的应用会在应用内提示更新。
 
 | 渠道 | 地址 | 适合 |
 | --- | --- | --- |
-| 官网固定链接 | `https://code.jiangshu.ai/LightRead/download/<平台>`：[windows](https://code.jiangshu.ai/LightRead/download/windows) · [mac](https://code.jiangshu.ai/LightRead/download/mac) · [mac-intel](https://code.jiangshu.ai/LightRead/download/mac-intel) · [linux](https://code.jiangshu.ai/LightRead/download/linux) · [linux-deb](https://code.jiangshu.ai/LightRead/download/linux-deb) · [linux-rpm](https://code.jiangshu.ai/LightRead/download/linux-rpm) · [android](https://code.jiangshu.ai/LightRead/download/android) | 链接不变，始终下载最新版；加 `?mirror=gitcode` 走国内镜像 |
-| GitHub Releases · 桌面版 | [github.com/yzfly/LightRead/releases/latest](https://github.com/yzfly/LightRead/releases/latest) | Windows、macOS、Linux |
-| GitHub Releases · 安卓 App | [以 `app-v` 开头的版本](https://github.com/yzfly/LightRead/releases?q=app-v&expanded=true) | Android 手机、平板 |
-| GitCode 国内镜像 | [gitcode.com/langgpt/LightRead/releases](https://gitcode.com/langgpt/LightRead/releases) | 访问 GitHub 慢时使用，桌面版与 App 均有 |
-| 应用内更新 | 设置 → 关于 → 检查更新 | 已安装用户；GitHub 访问不了时自动改用 GitCode 镜像 |
-| 源码构建 / 网页版 | 见下方「开发者：从源码运行」 | 自行部署网页 PWA 或二次开发 |
+| GitHub Releases · 桌面版 | [github.com/Cantrarella/LightReadX/releases/latest](https://github.com/Cantrarella/LightReadX/releases/latest) | Windows |
+| GitHub Releases · 安卓 App | [以 `app-v` 开头的版本](https://github.com/Cantrarella/LightReadX/releases?q=app-v&expanded=true) | Android 手机、平板 |
+| 应用内更新 | 设置 → 关于 → 检查更新 | 已安装用户 |
+| 源码构建 | 见下方「开发者：从源码运行」 | 自行构建或二次开发 |
 
 按设备选择安装包（`x.y.z` 为版本号）：
 
 | 设备 | 安装包 |
 | --- | --- |
 | Windows 10 / 11（64 位） | `LightRead_x.y.z_x64-setup.exe` |
-| macOS · Apple 芯片（M 系列） | `LightRead_x.y.z_aarch64.dmg` |
-| macOS · Intel | `LightRead_x.y.z_x64.dmg` |
-| Ubuntu / Debian | `LightRead_x.y.z_amd64.deb` |
-| Fedora / RHEL | `LightRead-x.y.z-1.x86_64.rpm` |
-| 其他 Linux | `LightRead_x.y.z_amd64.AppImage` |
 | Android 7.0+（arm64） | `LightRead_app-vx.y.z_android_arm64.apk` |
 
 每个版本附带 `SHA256SUMS`，可核对下载文件是否完整。安装后，把第一本书拖进轻阅即可开始。[完整安装与升级指南](docs/installation.md) · [三分钟上手](docs/manual/README.md#三分钟上手)
 
 <a id="android实验性"></a>
-**Android 说明：** App 目前是实验版（包名 `com.yzfly.lightread.debug`），同签名新版可直接覆盖升级。历史版本可能签名不同；遇到安装冲突，先保留旧应用，导出并验证应用目录外的备份，再按[迁移步骤](docs/installation.md#android实验性)操作。
+**Android 说明：** App 目前是实验版（包名 `com.cantrarella.lightreadx`），同签名新版可直接覆盖升级。历史版本可能签名不同；遇到安装冲突，先保留旧应用，导出并验证应用目录外的备份，再按[迁移步骤](docs/installation.md#android实验性)操作。
 
 <details>
 <summary>开发者：从源码运行</summary>
 
-网页版需要 Node.js；桌面版还需要 Rust 与对应平台的 Tauri 2 构建依赖。
+桌面版需要 Node.js、Rust 与对应平台的 Tauri 2 构建依赖。
 
 ```bash
-git clone https://github.com/yzfly/LightRead.git
-cd LightRead
+git clone https://github.com/Cantrarella/LightReadX.git
+cd LightReadX
 npm install
 npm run dev          # 网页开发
-npm run tauri dev    # 桌面开发
+npm run tauri dev    # 桌面开发（Windows）
 ```
 
 构建：`npm run build`（前端）或 `npm run tauri build`（桌面）。技术栈：Vue 3、TypeScript、Tauri 2 / Rust、foliate-js、MuPDF / PDFium。开发约定见 [CLAUDE.md](CLAUDE.md)。
@@ -173,9 +168,9 @@ npm run tauri dev    # 桌面开发
 
 ## 一起把轻阅做得更好
 
-喜欢轻阅，欢迎 **[Star](https://github.com/yzfly/LightRead)**，也欢迎[提出建议](https://github.com/yzfly/LightRead/issues)、提交 PR 或推荐合法公开书源。
+喜欢这个项目，欢迎 **[Star 上游仓库 yzfly/LightRead](https://github.com/yzfly/LightRead)**，也欢迎在本 fork [提出建议](https://github.com/Cantrarella/LightReadX/issues)或提交 PR。
 
-作者：**江树 / 云中江树** · 微信：**1796060717**（备注 `LightRead`）· 微信公众号：**云中江树**
+作者：**江树 / 云中江树**（[yzfly/LightRead](https://github.com/yzfly/LightRead) 原作者）· 微信：**1796060717**（备注 `LightRead`）· 微信公众号：**云中江树**
 
 <sub>本页为实际应用界面截图；书架、阅读记录与 PDF 译文使用演示数据，示例读物与封面为本项目制作，不随应用附送。[截图复现说明](docs/screenshots/README.md)</sub>
 
@@ -183,6 +178,6 @@ npm run tauri dev    # 桌面开发
 
 [GNU Affero General Public License v3.0 or later](LICENSE)
 
-LightRead 使用 AGPL 授权的 MuPDF，因此项目整体以 AGPL-3.0-or-later 发布。分发修改版或通过网络向用户提供修改版服务时，须依照协议提供对应源代码。
+LightRead 使用 AGPL 授权的 MuPDF，因此项目整体以 AGPL-3.0-or-later 发布。分发修改版或通过网络向用户提供修改版服务时，须依照协议提供对应源代码。本 fork 与上游保持同一协议。
 
 致谢：[foliate-js](https://github.com/johnfactotum/foliate-js) (MIT) · [MuPDF](https://mupdf.com/) (AGPL-3.0-or-later) · [PDFium](https://pdfium.googlesource.com/pdfium/) (BSD-3-Clause) · [BabelDOC](https://github.com/funstory-ai/BabelDOC) · 中文词表取自 [jieba](https://github.com/fxsjy/jieba) 词典 (MIT) 与 [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1) 分词器词表 (MIT)

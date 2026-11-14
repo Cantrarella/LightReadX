@@ -1,6 +1,6 @@
 name: Release (desktop)
 
-# 桌面版 (Windows / macOS / Linux) 发版: tag vX.Y.Z, 版本取 package.json / tauri.conf.json / Cargo。
+# 桌面版 (仅 Windows) 发版: tag vX.Y.Z, 版本取 package.json / tauri.conf.json / Cargo。
 # App (Android / iOS) 走 app-vX.Y.Z + release-mobile.yml, 两条线版本号各自递增 (2026-10-25)。
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '桌面版本 tag (vX.Y.Z)；构建并续建它的草稿，全部平台验证通过后公开为 latest。留空则构建当前 ref'
+        description: '桌面版本 tag (vX.Y.Z)；构建并续建它的草稿，Windows 构建验证通过后公开为 latest。留空则构建当前 ref'
         required: false
         default: ''
 
@@ -77,22 +77,8 @@ jobs:
 
   desktop:
     needs: preflight
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-            rust-targets: aarch64-apple-darwin
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
-            rust-targets: x86_64-apple-darwin
-          - platform: windows-latest
-            # WiX/MSI 在包含多种文件关联时会稳定失败；NSIS 同样是原生安装器且兼容这些关联。
-            args: '--bundles nsis'
-            rust-targets: ''
-
-    runs-on: ${{ matrix.platform }}
+    # 仅 Windows 桌面版：NSIS 安装器。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,8 +89,6 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust-targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -139,47 +123,7 @@ jobs:
             ${{ github.event.head_commit.message }}
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
-
-  # Linux 独立并行构建；最终 publish 等待全部平台与 Rust 最低版本检查。
-  desktop-linux:
-    needs: preflight
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-      - name: 安装 Linux 依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libasound2-dev cmake rpm
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          cache-targets: false
-
-      - run: npm ci
-
-      - name: 构建并上传到 Release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ inputs.tag || github.ref_name }}
-          releaseName: '${{ inputs.tag || github.ref_name }}'
-          releaseBody: |
-            ${{ github.event.head_commit.message }}
-          releaseDraft: true
-          prerelease: false
+          args: '--bundles nsis'
 
   rust-floor:
     needs: preflight
@@ -201,9 +145,9 @@ jobs:
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
   publish:
-    needs: [desktop, desktop-linux, rust-floor]
-    # 全部桌面平台与 Rust 最低版本检查成功后才公开草稿。
-    if: ${{ !cancelled() && needs.desktop.result == 'success' && needs.desktop-linux.result == 'success' && needs.rust-floor.result == 'success' }}
+    needs: [desktop, rust-floor]
+    # Windows 桌面构建与 Rust 最低版本检查成功后才公开草稿。
+    if: ${{ !cancelled() && needs.desktop.result == 'success' && needs.rust-floor.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -215,11 +159,7 @@ jobs:
           mkdir release-assets
           gh release download "$RELEASE_TAG" --dir release-assets --skip-existing
           cd release-assets
-          compgen -G '*_aarch64.dmg' >/dev/null
-          compgen -G '*_x64.dmg' >/dev/null
           compgen -G '*-setup.exe' >/dev/null
-          compgen -G '*.AppImage' >/dev/null
-          compgen -G '*.deb' >/dev/null
           # 桌面 Release 不带 APK: 已安装的 App 会采用任何带 APK 的 vX.Y.Z, 混入会把桌面版本推给 App 用户。
           ! compgen -G '*.apk' >/dev/null || { echo "::error::桌面 Release 不能包含 APK"; exit 1; }
           # 不把旧清单包含进新清单，也不删除已上传的安装包。
@@ -227,17 +167,5 @@ jobs:
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
           sha256sum -c SHA256SUMS
           gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
-      - name: 全部平台验证完成后公开为 latest
+      - name: Windows 构建验证完成后公开为 latest
         run: gh release edit "$RELEASE_TAG" --draft=false --title "$RELEASE_TAG" --latest
-
-  # 国内镜像（GitCode）：仅在 publish 成功后运行，只读 GitHub Release；未配置 GITCODE_TOKEN 时内部跳过。
-  # 失败不会撤回或修改 GitHub Release，可在 Actions → Mirror to GitCode 手动补跑。见 docs/gitcode-mirror.md。
-  mirror-gitcode:
-    needs: publish
-    if: ${{ !cancelled() && needs.publish.result == 'success' }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/mirror-gitcode.yml
-    with:
-      tag: ${{ inputs.tag || github.ref_name }}
-    secrets: inherit
