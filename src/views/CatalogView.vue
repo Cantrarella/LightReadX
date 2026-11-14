@@ -1616,7 +1616,7 @@ async function removeSource(s: CatalogSourceRec) {
 .catalog {
   min-width: 0;
   overflow-wrap: anywhere;
-  padding: var(--page-top) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
+  padding: calc(var(--page-top) + 20px) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
   min-height: 100%;
   max-width: calc(var(--page-max) + 2 * var(--page-x));
   margin: 0 auto;

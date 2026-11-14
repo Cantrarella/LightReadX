@@ -146,6 +146,10 @@ export interface ComicDownloadPrefs {
 export interface ComicReaderPrefs {
   /** 翻页方向: 'ltr' 从左到右 (点击右侧翻下一页), 'rtl' 从右到左 (日漫常见) */
   direction: 'ltr' | 'rtl'
+  /** 翻页方式: 'paged' 仿真翻页 (带翻页动画), 'scroll' 连续滚动 (长条) */
+  pageMode: 'paged' | 'scroll'
+  /** 页面视图: 单页 / 对页 (双页并排) / 自动 (宽窗口双页、窄窗口单页) */
+  spreadMode: 'single' | 'facing' | 'auto'
   /** 自动裁白边 (骨架阶段仅记录, 渲染裁剪后续补) */
   trimMargins: boolean
   /** 竖屏自动拆分双页 */
@@ -479,6 +483,8 @@ const defaults: SettingsState = {
   },
   comicReader: {
     direction: 'ltr',
+    pageMode: 'paged',
+    spreadMode: 'auto',
     trimMargins: false,
     splitDoublePage: true,
   },

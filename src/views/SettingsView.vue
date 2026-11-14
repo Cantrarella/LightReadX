@@ -1905,7 +1905,7 @@ const APPEARANCE_OPTIONS = [
 /* ================= 页面骨架 ================= */
 .settings {
   --nav-h: 52px;
-  padding: var(--page-top) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
+  padding: calc(var(--page-top) + 20px) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
   max-width: calc(var(--page-max-narrow) + 2 * var(--page-x));
   margin: 0 auto;
 }

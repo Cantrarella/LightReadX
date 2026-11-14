@@ -93,6 +93,14 @@ export default {
   'comics.readerSplitDouble': "竖屏自动拆分双页",
   'comics.readerSplitDoubleDesc': "横版跨页图在竖屏下拆成两页显示",
   'comics.readerModeHint': "阅读设置保存在本机，下次打开自动沿用",
+  'comics.readerPageMode': "翻页方式",
+  'comics.readerPagePaged': "仿真翻页",
+  'comics.readerPageScroll': "连续滚动",
+  'comics.readerPageView': "页面视图",
+  'comics.readerSpreadAuto': "自动",
+  'comics.readerSpreadAutoDesc': "宽窗口自动双页，窄窗口自动单页",
+  'comics.readerSpreadSingle': "单页",
+  'comics.readerSpreadFacing': "对页",
 
   // ---- 下载中心 ----
   'downloads.title': '下载',

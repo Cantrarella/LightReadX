@@ -93,6 +93,14 @@ export default {
   'comics.readerSplitDouble': "Split double pages in portrait",
   'comics.readerSplitDoubleDesc': "Split landscape spread pages into two in portrait",
   'comics.readerModeHint': "Reading settings are saved locally and reused next time",
+  'comics.readerPageMode': "Page turn",
+  'comics.readerPagePaged': "Page turn",
+  'comics.readerPageScroll': "Continuous scroll",
+  'comics.readerPageView': "Page view",
+  'comics.readerSpreadAuto': "Auto",
+  'comics.readerSpreadAutoDesc': "Facing pages on wide windows, single page on narrow",
+  'comics.readerSpreadSingle': "Single page",
+  'comics.readerSpreadFacing': "Facing pages",
 
   // ---- Downloads ----
   'downloads.title': 'Downloads',

@@ -440,7 +440,7 @@ onBeforeUnmount(() => {
   /* 共享给 App: App 样式表没有 --page-max-narrow, 回退到原宽度 */
   max-width: calc(var(--page-max-narrow, 772px) + 2 * var(--page-x));
   margin: 0 auto;
-  padding: var(--page-top) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
+  padding: calc(var(--page-top) + 20px) var(--page-x) calc(var(--page-bottom) + var(--lr-safe-bottom));
 }
 .page-head {
   display: flex;

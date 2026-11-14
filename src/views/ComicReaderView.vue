@@ -61,8 +61,42 @@ const chapterName = ref('')
 const pages = ref<ComicPage[]>([])
 const pageIndex = ref(0)
 const zoom = ref(1)
-const mode = ref<'single' | 'long'>('single')
 const tocOpen = ref(false)
+
+// ---- 翻页方式 / 页面视图 (持久化在 settings.comicReader) ----
+// pageMode: 'paged' 仿真翻页 / 'scroll' 连续滚动 (即旧「长条」)
+// spreadMode: 'auto' 自动 (宽窗口双页、窄窗口单页) / 'single' 单页 / 'facing' 对页 / 'book' 书籍视图
+const pageMode = computed(() => settings.comicReader.pageMode)
+const spreadMode = computed(() => settings.comicReader.spreadMode)
+/** 旧「单页 / 长条」模式: 现在由 pageMode 驱动 (paged→单页, scroll→长条) */
+const mode = computed<'single' | 'long'>(() => pageMode.value === 'scroll' ? 'long' : 'single')
+
+/** 宽窗口: 宽度达应用默认窗口宽度 (1180px, 见 tauri.conf.json) 即并排双页; 拉伸窗口实时响应。
+ *  用 window.innerWidth + resize 事件直接判断 (比 matchMedia 更可靠, WebView2 / 浏览器均稳定触发) */
+const wideWindow = ref(window.innerWidth >= 1180)
+function syncWideWindow() { wideWindow.value = window.innerWidth >= 1180 }
+
+/** 生效的页面视图: 'auto' 时按窗口宽窄在「对页 / 单页」间自动切, 手动选则用手动值 */
+const effectiveSpreadMode = computed<'single' | 'facing'>(() => {
+  if (spreadMode.value === 'auto') return wideWindow.value ? 'facing' : 'single'
+  return spreadMode.value
+})
+
+/** 翻页动画: 仿真翻页时的过渡状态 (方向 + 目标页), 用于 CSS 过渡 */
+/** 翻页动画触发标记: 非空时给 .stage 挂 flip 类触发 CSS 动画; dir 决定方向 (往前翻 = 回翻动画) */
+const flip = ref<{ dir: -1 | 1; from: number } | null>(null)
+
+/** 当前页所在的「页对」(对页时双页并排): 单页 = [当前页], 对页 = 1-2/3-4 顺序配对 */
+const currentSpread = computed<number[]>(() => {
+  const total = pages.value.length
+  if (!total) return []
+  const p = Math.min(Math.max(0, pageIndex.value), total - 1)
+  if (effectiveSpreadMode.value === 'single' || mode.value === 'long') return [p]
+  // 对页: 偶数页与下一页配对 (0-1, 2-3, 4-5 ...)
+  const start = p % 2 === 0 ? p : p - 1
+  const second = start + 1
+  return second < total ? [start, second] : [start]
+})
 const urls = reactive<Record<number, string>>({})
 const errors = reactive<Record<number, boolean>>({})
 
@@ -264,9 +298,16 @@ async function loadPage(index: number, force = false) {
   }
 }
 
-/** 单页模式: 当前页 + 左右各一页 */
-function preloadAround(index: number) {
-  for (const i of [index, index + 1, index - 1]) {
+/** 单页/仿真翻页模式: 预载当前页对 + 左右各一个页对 (对页模式下多预载相邻双页) */
+function preloadAround(_index: number) {
+  const spread = currentSpread.value
+  const want = new Set<number>(spread)
+  for (const p of spread) { want.add(p + 1); want.add(p - 1) }
+  // 对页: 相邻页对也要预载
+  if (effectiveSpreadMode.value !== 'single') {
+    for (const p of spread) { want.add(p + 2); want.add(p - 2) }
+  }
+  for (const i of want) {
     if (i >= 0 && i < pages.value.length) void loadPage(i)
   }
 }
@@ -405,13 +446,39 @@ async function bootLocal() {
 }
 
 // ---- 导航 ----
+/** 翻页步长: 对页下, 一次翻「一整个页对」(两页); 单页翻一页 */
+function pageStep(): number {
+  if (effectiveSpreadMode.value === 'single' || mode.value === 'long') return 1
+  return 2
+}
+
 function goPage(delta: number) {
+  if (mode.value === 'single') {
+    // 仿真翻页: 触发过渡动画
+    const dir = (delta > 0 ? 1 : -1) as -1 | 1
+    const next = pageIndex.value + delta * pageStep()
+    if (next >= 0 && next < pages.value.length) {
+      // 先清空再下一帧设置, 强制 CSS animation 重新触发 (连续翻页也能播动画)
+      flip.value = null
+      setPage(next)
+      requestAnimationFrame(() => { flip.value = { dir, from: next } })
+      window.setTimeout(() => { flip.value = null }, 260)
+      return
+    }
+    // 到头了: 在线翻章节; 本地书没有章节, 到头就停
+    if (isLocal.value) return
+    if (delta > 0) switchChapter(1)
+    else switchChapter(-1)
+    return
+  }
+  // 长条模式: 滚动翻页
   const next = pageIndex.value + delta
   if (next >= 0 && next < pages.value.length) {
     setPage(next)
+    const el = scrollEl.value?.querySelector<HTMLElement>(`[data-page-index="${next}"]`)
+    el?.scrollIntoView({ block: 'start' })
     return
   }
-  // 到头了: 在线翻章节; 本地书没有章节, 到头就停
   if (isLocal.value) return
   if (delta > 0) switchChapter(1)
   else switchChapter(-1)
@@ -472,7 +539,7 @@ function onKey(event: KeyboardEvent) {
 }
 
 function toggleMode() {
-  mode.value = mode.value === 'single' ? 'long' : 'single'
+  settings.comicReader.pageMode = settings.comicReader.pageMode === 'scroll' ? 'paged' : 'scroll'
   pan.x = 0
   pan.y = 0
   zoom.value = 1
@@ -509,12 +576,14 @@ onMounted(() => {
   void boot()
   void loadBookmarks()
   window.addEventListener('keydown', onKey)
+  window.addEventListener('resize', syncWideWindow)
   document.addEventListener('fullscreenchange', syncFullscreenState)
   showBars(true)
 })
 onBeforeUnmount(() => {
   window.clearTimeout(barsTimer)
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('resize', syncWideWindow)
   document.removeEventListener('fullscreenchange', syncFullscreenState)
   ambient.stop()
   clearPages()
@@ -570,11 +639,11 @@ onBeforeUnmount(() => {
       </button>
     </header>
 
-    <!-- 单页 -->
+    <!-- 单页 / 仿真翻页 (对页·书籍视图时并排显示双页) -->
     <div
       v-if="mode === 'single'"
       class="stage"
-      :class="{ zoomable: zoom > 1 }"
+      :class="{ zoomable: zoom > 1, flip: flip, 'flip-back': flip && flip.dir < 0 }"
       @wheel.prevent="onWheel"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
@@ -585,18 +654,25 @@ onBeforeUnmount(() => {
     >
       <p v-if="loading" class="stage-hint">{{ t('comics.loadingChapter') }}</p>
       <p v-else-if="bootError" class="stage-hint error">{{ bootError }}</p>
-      <div v-else class="page-box" :style="stageStyle">
-        <img
-          v-if="urls[pageIndex]"
-          :src="urls[pageIndex]"
-          :alt="String(pageIndex + 1)"
-          draggable="false"
-        />
-        <div v-else-if="errors[pageIndex]" class="page-fallback">
-          <span>{{ t('comics.imageFailed') }}</span>
-          <button class="btn btn-sm" @click.stop="retry(pageIndex)">{{ t('comics.readerRetry') }}</button>
+      <div v-else class="page-box" :class="{ spread: currentSpread.length > 1 }" :style="stageStyle">
+        <div
+          v-for="p in currentSpread"
+          :key="p"
+          class="page-cell"
+          :class="{ current: p === pageIndex }"
+        >
+          <img
+            v-if="urls[p]"
+            :src="urls[p]"
+            :alt="String(p + 1)"
+            draggable="false"
+          />
+          <div v-else-if="errors[p]" class="page-fallback">
+            <span>{{ t('comics.imageFailed') }}</span>
+            <button class="btn btn-sm" @click.stop="retry(p)">{{ t('comics.readerRetry') }}</button>
+          </div>
+          <div v-else class="page-fallback">{{ t('comics.loadingChapter') }}</div>
         </div>
-        <div v-else class="page-fallback">{{ t('comics.loadingChapter') }}</div>
       </div>
     </div>
 
@@ -686,6 +762,24 @@ onBeforeUnmount(() => {
           <button :class="{ active: settings.comicReader.direction === 'ltr' }" @click="settings.comicReader.direction = 'ltr'">{{ t('comics.readerDirectionLtr') }}</button>
           <button :class="{ active: settings.comicReader.direction === 'rtl' }" @click="settings.comicReader.direction = 'rtl'">{{ t('comics.readerDirectionRtl') }}</button>
         </div>
+      </div>
+
+      <div class="rm-section">
+        <span class="rm-title">{{ t('comics.readerPageMode') }}</span>
+        <div class="rm-segmented">
+          <button :class="{ active: settings.comicReader.pageMode === 'paged' }" @click="settings.comicReader.pageMode = 'paged'">{{ t('comics.readerPagePaged') }}</button>
+          <button :class="{ active: settings.comicReader.pageMode === 'scroll' }" @click="settings.comicReader.pageMode = 'scroll'">{{ t('comics.readerPageScroll') }}</button>
+        </div>
+      </div>
+
+      <div class="rm-section">
+        <span class="rm-title">{{ t('comics.readerPageView') }}</span>
+        <div class="rm-segmented">
+          <button :class="{ active: settings.comicReader.spreadMode === 'auto' }" @click="settings.comicReader.spreadMode = 'auto'">{{ t('comics.readerSpreadAuto') }}</button>
+          <button :class="{ active: settings.comicReader.spreadMode === 'single' }" @click="settings.comicReader.spreadMode = 'single'">{{ t('comics.readerSpreadSingle') }}</button>
+          <button :class="{ active: settings.comicReader.spreadMode === 'facing' }" @click="settings.comicReader.spreadMode = 'facing'">{{ t('comics.readerSpreadFacing') }}</button>
+        </div>
+        <span class="rm-desc">{{ t('comics.readerSpreadAutoDesc') }}</span>
       </div>
 
       <label class="rm-toggle">
@@ -785,8 +879,14 @@ onBeforeUnmount(() => {
 }
 .stage.zoomable { cursor: grab; }
 .stage.zoomable:active { cursor: grabbing; }
-.page-box { transition: transform 0.12s ease-out; transform-origin: center center; will-change: transform; }
-.page-box img {
+.page-box {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: transform 0.12s ease-out; transform-origin: center center; will-change: transform;
+}
+/* 对页 / 书籍视图: 双页并排 */
+.page-box.spread { gap: 12px; }
+.page-cell { display: flex; align-items: center; justify-content: center; }
+.page-cell img {
   display: block;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
@@ -794,6 +894,22 @@ onBeforeUnmount(() => {
   object-fit: contain;
   border-radius: var(--radius-xs);
   pointer-events: none;
+}
+/* 双页并排时, 单张图最多占一半宽度 (留出并排空间) */
+.page-box.spread .page-cell img { max-width: calc(50vw - 32px); }
+/* 书籍视图: 封面 (第 0 页) 单独占右页, 视觉上右侧留白 (书脊在左) */
+.page-cell.book-cover { order: 1; }
+.page-box.spread .page-cell.book-cover img { max-width: calc(50vw - 32px); }
+/* 仿真翻页动画: 翻页时新页从淡入, 只动 opacity 避免跟缩放/拖拽的内联 transform 冲突 */
+.stage.flip .page-box { animation: comic-flip 0.22s ease-out; }
+@keyframes comic-flip {
+  from { opacity: 0.25; }
+  to { opacity: 1; }
+}
+.stage.flip-back .page-box { animation: comic-flip-back 0.22s ease-out; }
+@keyframes comic-flip-back {
+  from { opacity: 0.25; }
+  to { opacity: 1; }
 }
 .stage-hint { color: var(--text-3); font-size: var(--fs-sm); }
 .stage-hint.error { color: var(--danger, #d9534f); }

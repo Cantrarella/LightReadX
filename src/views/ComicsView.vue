@@ -3,15 +3,20 @@
  * 漫画页: 本地漫画 (CBZ/CBR) 与在线漫画源分开显示。
  * 书籍与漫画共用同一个书库, 只在 UI 层按 format 分流 —— 同步、进度、标注全部沿用。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibrary } from '../stores/library'
+import { useSettings } from '../stores/settings'
 import { importFiles } from '../services/importer'
 import { readerPath } from '../services/readerRoute'
 import { isComicFormat } from '../services/comicFormat'
 import { toast } from '../services/toast'
 import { askConfirm, deleteConfirmOptions } from '../services/confirm'
 import { t } from '../i18n'
+import { shortAuthor, shortTitle } from '../services/displayTitle'
+import { loadDaily, localDay, onReadingLogChange } from '../services/readingLog'
+import { weekStartOf } from '../services/readingStats'
+import { MQ, useMediaQuery } from '../composables/useMediaQuery'
 import type { BookMeta } from '../storage'
 import {
   installFromFile, installFromUrl, listPlugins, removePlugin, setPluginEnabled,
@@ -23,6 +28,35 @@ import AppModal from '../components/AppModal.vue'
 
 const router = useRouter()
 const library = useLibrary()
+const settings = useSettings()
+const phone = useMediaQuery(MQ.phone)
+
+// ---- 今日 / 本周阅读时长 (与藏书页一致, 并入「最近阅读」卡片) ----
+const todaySeconds = ref(0)
+const weekSeconds = ref(0)
+let stopReadingLog: (() => void) | undefined
+async function refreshToday() {
+  try {
+    const daily = await loadDaily()
+    const today = localDay()
+    const monday = weekStartOf(today)
+    todaySeconds.value = daily[today]?.seconds ?? 0
+    weekSeconds.value = Object.entries(daily)
+      .filter(([day]) => day >= monday && day <= today)
+      .reduce((sum, [, entry]) => sum + (entry?.seconds ?? 0), 0)
+  } catch {
+    todaySeconds.value = 0
+    weekSeconds.value = 0
+  }
+}
+/** 本周: 不足 1 小时按分钟, 否则按小时 (一位小数) */
+const weekStat = computed(() => weekSeconds.value < 3570
+  ? { value: String(Math.round(weekSeconds.value / 60)), unit: t('library.statMinutes') }
+  : { value: (weekSeconds.value / 3600).toFixed(1).replace(/\.0$/, ''), unit: t('library.statHours') })
+const todayMinutes = computed(() => Math.round(todaySeconds.value / 60))
+const goalMinutes = computed(() => Math.max(0, Math.round(settings.dailyGoalMinutes || 0)))
+const todayRatio = computed(() => (goalMinutes.value > 0 ? Math.min(1, todaySeconds.value / (goalMinutes.value * 60)) : 0))
+const todayDone = computed(() => goalMinutes.value > 0 && todayRatio.value >= 1)
 const keyword = ref('')
 /* 上次停在哪个 tab 记下来: 从别的页面切回「漫画」时不会又跳回本地列表 */
 const TAB_KEY = 'lightread.comics.tab.v1'
@@ -107,7 +141,12 @@ const installMode = ref<'file' | 'url'>('file')
 const installUrl = ref('')
 const installing = ref(false)
 
-onMounted(() => { plugins.value = listPlugins() })
+onMounted(() => {
+  plugins.value = listPlugins()
+  void refreshToday()
+  stopReadingLog = onReadingLogChange(() => void refreshToday())
+})
+onBeforeUnmount(() => { stopReadingLog?.() })
 function refreshPlugins() { plugins.value = listPlugins() }
 
 async function onPluginFiles(event: Event) {
@@ -253,17 +292,28 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
     <section v-if="activeTab === 'local' && resumeComic" class="resume card" role="button" tabindex="0" :aria-label="`${t('library.continueReading')}: ${resumeComic.title}`" @click="openBook(resumeComic)" @keydown.enter.prevent="openBook(resumeComic)">
       <div class="resume-cover" aria-hidden="true">
         <img v-if="library.coverUrls[resumeComic.id]" :src="library.coverUrls[resumeComic.id]" alt="" decoding="async" />
-        <span v-else class="resume-cover-title">{{ resumeComic.title }}</span>
+        <span v-else class="resume-cover-title">{{ shortTitle(resumeComic.title) }}</span>
       </div>
       <div class="resume-info">
         <span class="resume-eyebrow">{{ t('library.continueReadingAgo', { time: agoText(resumeComic.lastReadAt!) }) }}</span>
-        <span class="resume-title">{{ resumeComic.title }}</span>
-        <span class="resume-author">{{ resumeComic.author || t('common.anonymous') }}</span>
+        <span class="resume-title">{{ shortTitle(resumeComic.title) }}</span>
+        <span class="resume-author">{{ shortAuthor(resumeComic.author) || t('common.anonymous') }}</span>
         <span class="resume-foot">
           <span class="resume-track" aria-hidden="true"><span class="resume-fill" :style="{ width: `${Math.max(resumePercent, 2)}%` }" /></span>
           <span class="resume-pct">{{ resumePercent }}%</span>
           <span class="resume-go" aria-hidden="true">{{ t('library.continue') }}</span>
         </span>
+      </div>
+      <!-- 桌面: 今日 / 本周时长并入继续阅读卡 (与藏书页一致) -->
+      <div v-if="!phone" class="resume-stats">
+        <router-link to="/stats" class="resume-stat" :title="t('stats.libraryTodayTitle', { m: todayMinutes })" @click.stop @keydown.enter.stop>
+          <b>{{ todayMinutes }}<small>{{ goalMinutes > 0 ? t('library.statGoalMinutes', { goal: goalMinutes }) : t('library.statMinutes') }}</small></b>
+          <span :class="{ done: todayDone }">{{ t('library.statToday') }}</span>
+        </router-link>
+        <router-link to="/stats" class="resume-stat" @click.stop @keydown.enter.stop>
+          <b>{{ weekStat.value }}<small>{{ weekStat.unit }}</small></b>
+          <span>{{ t('library.statWeek') }}</span>
+        </router-link>
       </div>
     </section>
 
@@ -513,4 +563,70 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .install-body { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .install-body .btn { width: 100%; }
 .install-input { padding-left: 12px; }
+
+/* ---- 桌面端 (≥721px): 最近阅读卡片对齐藏书页继续阅读 ---- */
+@media (min-width: 721px) {
+  .resume {
+    max-width: none;
+    align-items: center;
+    gap: var(--space-6);
+    margin: 0 0 var(--space-8);
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
+  }
+  .resume-cover { width: 88px; }
+  .resume-cover-title { padding: 12px 10px; font-size: var(--fs-small); }
+  .resume-eyebrow { font-size: var(--fs-caption); }
+  .resume-title {
+    margin-top: var(--space-1);
+    font-size: var(--fs-title);
+    font-weight: var(--fw-semibold);
+    -webkit-line-clamp: 1;
+  }
+  .resume-author { font-size: var(--fs-small); }
+  .resume-foot {
+    max-width: 480px;
+    margin-top: var(--space-4);
+    padding-top: 0;
+    gap: var(--space-3);
+  }
+  .resume-pct { font-size: var(--fs-small); }
+  .resume-go {
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-small);
+    font-weight: var(--fw-medium);
+  }
+  .resume-stats {
+    flex-shrink: 0;
+    display: flex;
+    gap: var(--space-8);
+    padding: 0 var(--space-4) 0 var(--space-8);
+    border-left: 1px solid var(--border);
+  }
+  .resume-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    text-decoration: none;
+  }
+  .resume-stat b {
+    font-size: var(--fs-display);
+    font-weight: var(--fw-semibold);
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    transition: color var(--dur-fast) var(--ease);
+  }
+  .resume-stat small {
+    font-size: var(--fs-small);
+    font-weight: var(--fw-regular);
+    color: var(--text-3);
+  }
+  .resume-stat > span { font-size: var(--fs-small); color: var(--text-3); }
+  .resume-stat > span.done { color: var(--success); }
+  .resume-stat:hover b { color: var(--brand); }
+  .resume-stat:focus-visible { outline: none; box-shadow: var(--ring); }
+}
 </style>
