@@ -1,0 +1,69 @@
+name: Verify Windows installer upgrade
+
+on:
+  push:
+    branches: [qa/windows-upgrade-v2.10.5]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ac0f777185b45fb75c6af7ec42e571566f584e0c
+          path: release-source
+      - uses: actions/checkout@v4
+        with:
+          path: qa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build production NSIS installer
+        working-directory: release-source
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri -- build --bundles nsis
+          exit $LASTEXITCODE
+      - name: Install 2.10.4 and upgrade to 2.10.5
+        working-directory: release-source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testRoot = Join-Path $env:RUNNER_TEMP 'lightread-upgrade'
+          New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+          $old = Join-Path $testRoot 'LightRead_2.10.4_x64-setup.exe'
+          $sums = Join-Path $testRoot 'SHA256SUMS-2.10.4'
+          $release = 'https://github.com/Cantrarella/LightReadX/releases/download/v2.10.4'
+          Invoke-WebRequest "$release/LightRead_2.10.4_x64-setup.exe" -OutFile $old
+          Invoke-WebRequest "$release/SHA256SUMS" -OutFile $sums
+          $expected = ((Get-Content -LiteralPath $sums) -split '\s+')[0]
+          if ((Get-FileHash -LiteralPath $old).Hash -ne $expected) { throw '2.10.4 checksum mismatch' }
+          $installer = Get-Item -Path 'src-tauri/target/release/bundle/nsis/*2.10.5*x64-setup.exe'
+          Copy-Item ../qa/scripts/verify-windows-upgrade.mjs ./scripts/verify-windows-upgrade.mjs
+          node scripts/verify-windows-upgrade.mjs $testRoot $old $installer.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $newHash = (Get-FileHash -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
+          "$newHash  $($installer.Name)" | Set-Content -Encoding ascii -Path (Join-Path $testRoot 'SHA256SUMS')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-evidence
+          path: |
+            ${{ runner.temp }}/lightread-upgrade/*.png
+            ${{ runner.temp }}/lightread-upgrade/upgrade-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-windows-installer
+          if-no-files-found: error
+          path: |
+            release-source/src-tauri/target/release/bundle/nsis/*2.10.5*x64-setup.exe
+            ${{ runner.temp }}/lightread-upgrade/SHA256SUMS
