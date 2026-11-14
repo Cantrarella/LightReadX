@@ -752,14 +752,14 @@ onBeforeUnmount(() => {
 .bar-peek.bottom { bottom: 0; }
 
 .book-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.book-title strong { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
-.book-title .chapter { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26vw; }
+.book-title strong { font-size: var(--fs-base); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.book-title .chapter { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26vw; }
 .bar-spacer { flex: 1; }
-.counter { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.counter { font-size: var(--fs-xs); color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .icon-btn {
   width: var(--control-h-sm, 30px); height: var(--control-h-sm, 30px);
-  border: none; background: none; border-radius: 6px;
+  border: none; background: none; border-radius: var(--radius-sm);
   color: var(--text-2); display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
 }
@@ -769,7 +769,7 @@ onBeforeUnmount(() => {
 .zoom-label {
   min-width: 48px; height: var(--control-h-sm, 30px);
   border: none; background: none; color: var(--text-2);
-  font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 6px;
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; cursor: pointer; border-radius: var(--radius-sm);
 }
 .zoom-label:hover { background: var(--bg); color: var(--text); }
 
@@ -792,15 +792,15 @@ onBeforeUnmount(() => {
   max-height: calc(100vh - 24px);
   width: auto; height: auto;
   object-fit: contain;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   pointer-events: none;
 }
-.stage-hint { color: var(--text-3); font-size: 13px; }
+.stage-hint { color: var(--text-3); font-size: var(--fs-sm); }
 .stage-hint.error { color: var(--danger, #d9534f); }
 .page-fallback {
   width: min(70vw, 520px); min-height: 220px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  background: var(--surface-2); color: var(--text-3); font-size: 13px; border-radius: 10px;
+  background: var(--surface-2); color: var(--text-3); font-size: var(--fs-sm); border-radius: var(--radius-lg);
 }
 
 /* ---- 长条 ---- */
@@ -828,18 +828,18 @@ onBeforeUnmount(() => {
   display: flex; flex-direction: column;
   background: var(--card);
   border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-lg);
 }
 .toc-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; font-size: 13px; font-weight: 600;
+  padding: 12px 14px; font-size: var(--fs-sm); font-weight: 600;
   border-bottom: 1px solid var(--border);
 }
 .toc-list { flex: 1; overflow-y: auto; padding: 6px; }
 .toc-row {
   width: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border: 0; background: none; border-radius: 6px;
-  color: var(--text-2); font-size: 13px; text-align: left; cursor: pointer;
+  padding: 8px 10px; border: 0; background: none; border-radius: var(--radius-sm);
+  color: var(--text-2); font-size: var(--fs-sm); text-align: left; cursor: pointer;
 }
 .toc-row:hover { background: var(--bg); color: var(--text); }
 .toc-row.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
@@ -850,7 +850,7 @@ onBeforeUnmount(() => {
 .fs-exit {
   position: absolute; top: 10px; right: 12px; z-index: 30;
   background: var(--card); border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ---- 阅读模式面板 (漫画专属) ---- */
@@ -864,19 +864,19 @@ onBeforeUnmount(() => {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-lg);
   color: var(--text);
 }
 .rm-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 14px; font-weight: 650;
+  font-size: var(--fs-base); font-weight: 600;
 }
 .rm-section { display: flex; flex-direction: column; gap: 8px; }
-.rm-title { font-size: 12px; color: var(--text-3); }
+.rm-title { font-size: var(--fs-xs); color: var(--text-3); }
 .rm-segmented { display: flex; gap: 6px; }
 .rm-segmented button {
-  flex: 1; padding: 8px 10px; font-size: 13px; cursor: pointer;
-  border: 1px solid var(--border); border-radius: 8px;
+  flex: 1; padding: 8px 10px; font-size: var(--fs-sm); cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface-1); color: var(--text-2);
 }
 .rm-segmented button.active {
@@ -886,8 +886,8 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   cursor: pointer;
 }
-.rm-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text-2); }
-.rm-desc { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.rm-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--text-2); }
+.rm-desc { font-size: var(--fs-xs); color: var(--text-3); line-height: 1.4; }
 .rm-switch { position: relative; flex: none; width: 36px; height: 20px; }
 .rm-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .rm-switch-track {
@@ -901,5 +901,5 @@ onBeforeUnmount(() => {
 }
 .rm-switch input:checked + .rm-switch-track { background: var(--brand); }
 .rm-switch input:checked + .rm-switch-track::after { transform: translateX(16px); }
-.rm-hint { margin: 0; font-size: 11px; color: var(--text-3); line-height: 1.5; border-top: 1px solid var(--border); padding-top: 10px; }
+.rm-hint { margin: 0; font-size: var(--fs-xs); color: var(--text-3); line-height: 1.5; border-top: 1px solid var(--border); padding-top: 10px; }
 </style>

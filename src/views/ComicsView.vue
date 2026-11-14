@@ -409,7 +409,7 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .search-icon { position: absolute; left: 12px; color: var(--text-3); pointer-events: none; }
 /* 搜索框跟按钮同高同字号, 否则一排控件高矮不齐 */
 .search { width: 100%; height: var(--control-h); padding: 0 30px 0 34px; font-size: 13px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
-.toolbar .btn { padding: 0 12px; font-size: 13px; }
+.toolbar .btn { padding: 0 12px; font-size: var(--fs-sm); }
 .comic-section { margin-top: 12px; }
 
 /* 最近阅读 (与藏书页继续阅读同形态) */
@@ -435,12 +435,12 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .resume-cover-title {
   display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
   padding: 10px 8px; font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
-  font-size: 11px; font-weight: 600; line-height: 1.4;
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1.4;
 }
 .resume-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .resume-eyebrow { font-size: 12px; color: var(--text-3); }
 .resume-title {
-  margin-top: 4px; font-size: 16px; font-weight: 700; line-height: 1.35;
+  margin-top: 4px; font-size: var(--fs-subtitle); font-weight: 600; line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .resume-author { margin-top: 2px; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -457,13 +457,13 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .comic-tab {
   display: inline-flex; align-items: center; gap: 8px;
   border: 0; background: none; color: var(--text-3);
-  padding: 10px 16px 12px; font-size: 14px; cursor: pointer;
+  padding: 10px 16px 12px; font-size: var(--fs-base); cursor: pointer;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .comic-tab:hover { color: var(--text); }
-.comic-tab.active { color: var(--text); border-bottom-color: var(--accent, currentColor); font-weight: 650; }
-.tab-count { font-size: 11px; color: var(--text-3); background: var(--surface-2); border-radius: 999px; padding: 1px 7px; }
-.section-title { font-size: 15px; font-weight: 650; margin: 18px 0 14px; color: var(--text-2); }
+.comic-tab.active { color: var(--text); border-bottom-color: var(--accent, currentColor); font-weight: 600; }
+.tab-count { font-size: var(--fs-xs); color: var(--text-3); background: var(--surface-2); border-radius: 999px; padding: 1px 7px; }
+.section-title { font-size: var(--fs-md); font-weight: 600; margin: 18px 0 14px; color: var(--text-2); }
 .section-head { display: flex; align-items: center; gap: 10px; }
 .section-head .section-title { margin-right: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 22px 16px; }
@@ -479,8 +479,8 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 }
 .empty-icon { color: var(--text-3); width: 38px; height: 38px; margin-bottom: 12px; }
 .empty-icon svg { width: 100%; height: 100%; }
-.empty-title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
-.hint { color: var(--text-3); font-size: 13px; line-height: 1.6; margin: 0; }
+.empty-title { font-size: var(--fs-md); font-weight: 600; margin: 0 0 6px; }
+.hint { color: var(--text-3); font-size: var(--fs-sm); line-height: 1.6; margin: 0; }
 .empty-actions { margin-top: 16px; }
 
 /* ---- 漫画源卡片 (沿用藏书页卡片语言) ---- */
@@ -496,12 +496,12 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .source-icon-fallback { display: grid; place-items: center; color: var(--text-3); padding: 7px; }
 .source-icon-fallback svg { width: 100%; height: 100%; }
 .source-meta { min-width: 0; }
-.source-name { font-size: 14px; font-weight: 650; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
-.source-version { font-size: 11px; font-weight: 400; color: var(--text-3); }
-.source-badge { font-size: 11px; font-weight: 500; color: var(--text-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+.source-name { font-size: var(--fs-base); font-weight: 600; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.source-version { font-size: var(--fs-xs); font-weight: 400; color: var(--text-3); }
+.source-badge { font-size: var(--fs-xs); font-weight: 500; color: var(--text-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
 .source-update-badge { color: var(--accent, currentColor); border-color: var(--accent, currentColor); }
 .btn-update { color: var(--accent, currentColor); }
-.source-desc { margin: 5px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-3); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.source-desc { margin: 5px 0 0; font-size: var(--fs-xs); line-height: 1.5; color: var(--text-3); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .source-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .source-actions .btn { flex: 1; white-space: nowrap; }
 
