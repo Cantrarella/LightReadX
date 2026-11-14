@@ -165,7 +165,7 @@ try {
   })
   await old.page.locator('.book-card').filter({ hasText: bookTitle }).first().waitFor()
   await goto(old.page, '/comics')
-  await old.page.getByRole('button', { name: /^(Comic sources|漫画源)$/ }).click()
+  await old.page.getByRole('tab', { name: /Comic sources|漫画源/ }).click()
   await old.page.getByRole('button', { name: /^(Add source|添加源|添加漫画源|安装漫画源)$/ }).first().click()
   await old.page.locator('.install-body input[type=file]').setInputFiles({
     name: 'upgrade-fixture.js', mimeType: 'text/javascript', buffer: Buffer.from(fixture),

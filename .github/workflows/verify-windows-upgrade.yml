@@ -25,12 +25,18 @@ jobs:
           cache: npm
           cache-dependency-path: release-source/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: release-source/src-tauri
+          cache-targets: false
       - name: Build production NSIS installer
         working-directory: release-source
         shell: pwsh
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $llvm = Join-Path $env:ProgramFiles 'LLVM/bin'
+          if (Test-Path (Join-Path $llvm 'libclang.dll')) { $env:LIBCLANG_PATH = $llvm }
           npm run tauri -- build --bundles nsis
           exit $LASTEXITCODE
       - name: Install 2.10.4 and upgrade to 2.10.5
