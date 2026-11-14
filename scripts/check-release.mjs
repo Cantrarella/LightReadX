@@ -7,7 +7,7 @@ import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
 
 // Existing experimental Android installs must remain upgrade-compatible.
-const ANDROID_PACKAGE = 'com.yzfly.lightread.debug'
+const ANDROID_PACKAGE = 'com.cantrarella.lightreadx.debug'
 const ANDROID_MIN_SDK = 24
 const ANDROID_TARGET_SDK = 36
 
@@ -30,7 +30,7 @@ function repositoryVersion(tag, platform = 'desktop') {
   const cargoLock = readFileSync('src-tauri/Cargo.lock', 'utf8').split('[[package]]')
     .find(section => /^name = "lightread"$/m.test(section))
   const tomlVersion = text => text?.match(/^version\s*=\s*"([^"]+)"/m)?.[1]
-  assert.equal(config.identifier, 'com.yzfly.lightread', 'application identifier must remain stable')
+  assert.equal(config.identifier, 'com.cantrarella.lightreadx', 'application identifier must remain stable')
   assert.equal(config.bundle?.android?.debugApplicationIdSuffix, '.debug', 'Android package suffix must remain stable')
   assert.ok(!config.bundle?.android?.autoIncrementVersionCode, 'release versionCode must be reproducible')
   const desktopVersion = validateVersions({
@@ -93,7 +93,7 @@ function selfTest() {
   assert.throws(() => validateVersions({ 'package.json': '1.3.0' }, 'v1.2.0'))
   const cert = 'ab'.repeat(32)
   const expected = { version: '1.3.0', versionCode: 1003000, cert }
-  const badging = "package: name='com.yzfly.lightread.debug' versionCode='1003000' versionName='1.3.0'\nsdkVersion:'24'\ntargetSdkVersion:'36'\nnative-code: 'arm64-v8a'"
+  const badging = "package: name='com.cantrarella.lightreadx.debug' versionCode='1003000' versionName='1.3.0'\nsdkVersion:'24'\ntargetSdkVersion:'36'\nnative-code: 'arm64-v8a'"
   const certificates = `Signer #1 certificate SHA-256 digest: ${cert}`
   assert.equal(verifyApkMetadata(badging, certificates, expected).packageName, ANDROID_PACKAGE)
   for (const [from, to] of [['.debug', ''], ['1003000', '1002000'], ['1.3.0', '1.2.0'], ["sdkVersion:'24'", "sdkVersion:'26'"], ["targetSdkVersion:'36'", "targetSdkVersion:'35'"], ['arm64-v8a', 'x86_64']]) {
