@@ -19,6 +19,8 @@ mod ios_shell;
 // 契约只校验 IPC 参数映射, 与平台无关, Linux / macOS 覆盖即可。
 #[cfg(all(test, not(windows)))]
 mod ipc_contract_tests;
+#[cfg(any(windows, test))]
+mod legacy_migration;
 mod library_files;
 mod library_import;
 mod local_llm;
@@ -88,52 +90,21 @@ fn queue_open_files(app: &tauri::AppHandle, paths: Vec<String>) {
   }
 }
 
-/// 应用标识符 com.yzfly.lightread → com.cantrarella.lightreadx 后, Windows 数据目录
-/// (Roaming\com.yzfly.lightread) 也跟着变。首次启动新版本时, 若新目录还空、旧目录有
-/// 书库数据库, 就把旧目录的内容整体拷过来, 保证书库 / 封面 / 下载的漫画不丢。
-/// 注意: 登录态 (WebView Cookie) 存在 Local 数据目录, 书库在 Roaming, 两者都要迁移。
 #[cfg(target_os = "windows")]
-fn migrate_legacy_data_dir(app: &tauri::AppHandle) {
-  use tauri::Manager as _;
-
-  // 逐项拷贝: 目录递归, 文件直接 copy
-  fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) {
-    if let Ok(entries) = std::fs::read_dir(src) {
-      let _ = std::fs::create_dir_all(dst);
-      for entry in entries.flatten() {
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if from.is_dir() {
-          copy_recursive(&from, &to);
-        } else if let Err(e) = std::fs::copy(&from, &to) {
-          eprintln!("[migrate] 拷贝 {} 失败: {e}", from.display());
-        }
-      }
-    }
-  }
-
-  // 1) Roaming 数据目录: 书库数据库 / books / covers 等
-  if let Ok(new_dir) = app.path().app_data_dir() {
-    let legacy_dir = new_dir.with_file_name("com.yzfly.lightread");
-    if legacy_dir.exists()
-      && !(new_dir.join("lightread.db").exists() || new_dir.join("books").exists())
-      && (legacy_dir.join("lightread.db").exists() || legacy_dir.join("books").exists())
-    {
-      copy_recursive(&legacy_dir, &new_dir);
-    }
-  }
-
-  // 2) Local 数据目录: WebView Cookie (.cookies / EBWebView) 承载插件登录态
-  if let Ok(new_local) = app.path().app_local_data_dir() {
-    let legacy_local = new_local.with_file_name("com.yzfly.lightread");
-    if legacy_local.exists()
-      // 新 Local 目录已有 Cookie 就视为迁移过, 不覆盖
-      && !new_local.join(".cookies").exists()
-      && (legacy_local.join(".cookies").exists() || legacy_local.join("EBWebView").exists())
-    {
-      copy_recursive(&legacy_local, &new_local);
-    }
-  }
+fn migrate_legacy_data_dir(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+  let data = app.path().app_data_dir()?;
+  legacy_migration::migrate_directory(
+    &data.with_file_name("com.yzfly.lightread"),
+    &data,
+    &["lightread.db", "books"],
+  )?;
+  let local = app.path().app_local_data_dir()?;
+  legacy_migration::migrate_directory(
+    &local.with_file_name("com.yzfly.lightread"),
+    &local,
+    &[".cookies", "EBWebView"],
+  )?;
+  Ok(())
 }
 
 #[tauri::command]
@@ -312,17 +283,16 @@ pub fn run() {
       // 设置 (Local Storage)、书籍与进度 (SQLite/文件) 在其他目录, 不受影响。
       #[cfg(target_os = "windows")]
       {
-        use tauri::Manager as _;
-        if let Ok(dir) = app.path().app_local_data_dir() {
-          let sw_dir = dir.join("EBWebView").join("Default").join("Service Worker");
-          if sw_dir.exists() {
-            let _ = std::fs::remove_dir_all(&sw_dir);
-          }
+        // Windows config defers the main window until data and WebView profile migration finish.
+        migrate_legacy_data_dir(app.handle())?;
+        let dir = app.path().app_local_data_dir()?;
+        let sw_dir = dir.join("EBWebView").join("Default").join("Service Worker");
+        if sw_dir.exists() {
+          let _ = std::fs::remove_dir_all(&sw_dir);
         }
-        // 应用标识符从 com.yzfly.lightread 改为 com.cantrarella.lightreadx 后,
-        // 数据目录随之迁移 (Roaming\com.yzfly.lightread → Roaming\com.cantrarella.lightreadx)。
-        // 首次启动时若新目录还空、旧目录有书库, 就把旧目录整体拷过来, 避免书库/封面/下载丢失。
-        migrate_legacy_data_dir(app.handle());
+        let window_config = app.config().app.windows.iter().find(|window| window.label == "main")
+          .ok_or_else(|| std::io::Error::other("missing main window configuration"))?;
+        tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?.build()?;
       }
       diagnostics::install(app.handle())?;
       // Windows: 无系统标题栏 + 圆角 (与 macOS 对齐), 超出工作区的窗口缩进来

@@ -273,7 +273,7 @@ function evict(budget = MAX_CACHED) {
 async function loadPage(index: number, force = false) {
   const page = pages.value[index]
   if (!page || !host) return
-  if (!force && (urls[index] || inflight.has(index))) return
+  if (inflight.has(index) || (!force && (urls[index] || errors[index]))) return
   if (force) { delete errors[index]; if (urls[index]) { URL.revokeObjectURL(urls[index]); delete urls[index] } }
   inflight.add(index)
   try {
@@ -324,7 +324,6 @@ function setupObserver() {
       if (!entry.isIntersecting) continue
       const index = Number((entry.target as HTMLElement).dataset.pageIndex)
       void loadPage(index)
-      observer?.unobserve(entry.target)
     }
   }, { root: scrollEl.value, rootMargin: '900px 0px' })
   scrollEl.value.querySelectorAll<HTMLElement>('[data-page-index]').forEach(el => observer?.observe(el))
@@ -381,8 +380,10 @@ async function loadChapter(id: string) {
     pageIndex.value = start
 
     await new Promise(resolve => requestAnimationFrame(resolve))
-    if (mode.value === 'long') setupObserver()
-    else preloadAround(start)
+    if (mode.value === 'long') {
+      setupObserver()
+      scrollToPage(start)
+    } else preloadAround(start)
   } catch (e: any) {
     bootError.value = e?.message ?? t('common.unknownError')
     toast(bootError.value, 'error', 6000)
@@ -435,7 +436,10 @@ async function bootLocal() {
     pageIndex.value = start
 
     await new Promise(resolve => requestAnimationFrame(resolve))
-    if (mode.value === 'long') setupObserver()
+    if (mode.value === 'long') {
+      setupObserver()
+      scrollToPage(start)
+    }
   } catch (e: any) {
     bootError.value = e?.message ?? t('common.unknownError')
     toast(bootError.value, 'error', 6000)
@@ -456,7 +460,9 @@ function goPage(delta: number) {
   if (mode.value === 'single') {
     // 仿真翻页: 触发过渡动画
     const dir = (delta > 0 ? 1 : -1) as -1 | 1
-    const next = pageIndex.value + delta * pageStep()
+    const step = pageStep()
+    const first = Math.floor(pageIndex.value / step) * step
+    const next = first + delta * step
     if (next >= 0 && next < pages.value.length) {
       // 先清空再下一帧设置, 强制 CSS animation 重新触发 (连续翻页也能播动画)
       flip.value = null
@@ -475,8 +481,6 @@ function goPage(delta: number) {
   const next = pageIndex.value + delta
   if (next >= 0 && next < pages.value.length) {
     setPage(next)
-    const el = scrollEl.value?.querySelector<HTMLElement>(`[data-page-index="${next}"]`)
-    el?.scrollIntoView({ block: 'start' })
     return
   }
   if (isLocal.value) return
@@ -487,8 +491,10 @@ function goPage(delta: number) {
 function setPage(index: number) {
   pageIndex.value = index
   saveProgress()
-  preloadAround(index)
-  if (mode.value === 'single') {
+  if (mode.value === 'long') {
+    scrollToPage(index)
+  } else {
+    preloadAround(index)
     pan.x = 0
     pan.y = 0
   }
@@ -538,24 +544,28 @@ function onKey(event: KeyboardEvent) {
   event.preventDefault()
 }
 
+function scrollToPage(index: number) {
+  const el = scrollEl.value?.querySelector<HTMLElement>(`[data-page-index="${index}"]`)
+  el?.scrollIntoView({ block: 'start' })
+}
+
 function toggleMode() {
   settings.comicReader.pageMode = settings.comicReader.pageMode === 'scroll' ? 'paged' : 'scroll'
+}
+
+watch(mode, value => {
   pan.x = 0
   pan.y = 0
   zoom.value = 1
-  if (mode.value === 'long') {
-    requestAnimationFrame(() => {
-      setupObserver()
-      // 切到长条模式时停在当前页
-      const el = scrollEl.value?.querySelector<HTMLElement>(`[data-page-index="${pageIndex.value}"]`)
-      el?.scrollIntoView({ block: 'start' })
-    })
+  if (value === 'long') {
+    setupObserver()
+    scrollToPage(pageIndex.value)
   } else {
     observer?.disconnect()
     observer = null
     preloadAround(pageIndex.value)
   }
-}
+}, { flush: 'post' })
 
 /** 长条模式滚动时把最靠近顶部视口的页记成当前页 */
 function onScroll() {
@@ -921,6 +931,7 @@ onBeforeUnmount(() => {
 
 /* ---- 长条 ---- */
 .long-strip {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;

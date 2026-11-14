@@ -41,8 +41,13 @@ const stub = {
       }
       return {
         loader: 'js',
-        contents: `export function setPluginConfigValue(...args) {
-  globalThis.__accountTest.saved.push(args)
+        contents: `export function getPluginConfig(uuid) {
+  return globalThis.__accountTest.config.get(uuid) ?? {}
+}
+export function setPluginConfigValue(uuid, key, value) {
+  const state = globalThis.__accountTest
+  state.config.set(uuid, { ...getPluginConfig(uuid), [key]: value })
+  state.saved.push([uuid, key, value])
 }`,
       }
     })
@@ -50,7 +55,7 @@ const stub = {
 }
 
 function reset(fns = {}) {
-  globalThis.__accountTest = { fns, calls: [], saved: [] }
+  globalThis.__accountTest = { fns, calls: [], saved: [], config: new Map() }
 }
 
 try {

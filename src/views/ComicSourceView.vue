@@ -13,7 +13,7 @@ import {
   type ComicPluginHost,
 } from '../services/comicPlugin'
 import { bytesToObjectUrl } from '../services/comicPlugin/download'
-import { cancel as cancelTask, enqueue, findTask, initDownloads, resume } from '../services/comicPlugin/downloadCenter'
+import { cancel as cancelTask, enqueue, findTask, initDownloads, matchesDownloadedBook, resume } from '../services/comicPlugin/downloadCenter'
 import type { DetailChip, DetailMetaGroup } from '../services/comicPlugin/normalize'
 import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
 import { useLibrary } from '../stores/library'
@@ -350,10 +350,13 @@ async function batchDownloadAll() {
 async function openDownloaded(chapter: ComicChapter) {
   const task = taskOf(chapter)
   if (!task?.bookId) return
-  if (!library.books.length) await library.refresh()
-  const book = library.books.find(b => b.id === task.bookId)
+  let book = library.books.find(b => matchesDownloadedBook(task, b))
+  if (!book) {
+    await library.refresh()
+    book = library.books.find(b => matchesDownloadedBook(task, b))
+  }
   if (book) { void router.push(readerPath(book)); return }
-  toast(t('downloads.fileMissing'), 'error')
+  await download(chapter)
 }
 
 /** 章节行下载按钮: 已入库就直接读, 否则进下载队列 */

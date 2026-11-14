@@ -1,0 +1,44 @@
+name: PR regression
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend build and comic regression
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+        env:
+          TAURI_ENV_PLATFORM: windows
+      - name: Run comic regressions
+        run: |
+          node --test scripts/test-comic-plugin.mjs scripts/test-comic-store.mjs scripts/test-comic-store-net.mjs scripts/test-comic-detail.mjs scripts/test-comic-account.mjs
+          npm run test:comic-downloads
+          npm run test:comic-reader
+
+  migration:
+    name: Windows data migration
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run migration regressions
+        shell: pwsh
+        run: |
+          $testBinary = Join-Path $env:RUNNER_TEMP 'lightread-migration-tests.exe'
+          rustc --edition=2021 --test src-tauri/src/legacy_migration.rs -o $testBinary
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $testBinary
+          exit $LASTEXITCODE

@@ -3,6 +3,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "LightRead 轻阅",
         "width": 1180,
         "height": 780,

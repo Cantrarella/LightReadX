@@ -79,7 +79,12 @@ function load(): DownloadTask[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
     if (!Array.isArray(raw)) return []
-    return raw.filter((t: DownloadTask) => t && t.id).map((t: DownloadTask) => (
+    const seen = new Set<string>()
+    return raw.filter((t: DownloadTask) => {
+      if (!t?.id || seen.has(t.id)) return false
+      seen.add(t.id)
+      return true
+    }).map((t: DownloadTask) => (
       // 上次退出时还在跑/暂停/排队的, 现在肯定已经停了
       t.status === 'running' || t.status === 'queued' || t.status === 'paused'
         ? { ...t, status: 'interrupted' as TaskStatus, error: t.error }
@@ -90,8 +95,10 @@ function load(): DownloadTask[] {
   }
 }
 
+let initialized = false
 export function initDownloads() {
-  if (downloadState.tasks.length) return
+  if (initialized) return
+  initialized = true
   downloadState.tasks = load()
 }
 
@@ -116,6 +123,18 @@ export function findTask(uuid: string, comicId: string, chapter: ComicChapter | 
   return downloadState.tasks.find(t => t.id === id)
 }
 
+function isLegacyDownload(book: BookMeta, uuid: string, comicId: string, fileName?: string): boolean {
+  return !!fileName && book.source === '漫画源下载'
+    && book.description === `${uuid} · ${comicId}` && book.fileName === fileName
+}
+
+export function matchesDownloadedBook(task: DownloadTask, book: BookMeta): boolean {
+  if (book.id !== task.bookId) return false
+  if (book.description === chapterKey(task.uuid, task.comicId, task.chapterId)) return true
+  const fileName = safeFileName(`${task.comicTitle} - ${task.chapterName}.cbz`)
+  return isLegacyDownload(book, task.uuid, task.comicId, fileName)
+}
+
 /**
  * 在藏书里找这一章已入库的书, 找到就说明不用再下。
  * 主键是 description 里的完整章节 key; 旧版本下载只写了 `uuid · comicId` (没有章节),
@@ -132,8 +151,7 @@ export async function findDownloadedBook(
     const key = chapterKey(uuid, comicId, chapterId)
     const byKey = books.find(b => b.description === key)
     if (byKey) return byKey
-    if (!fileName) return undefined
-    return books.find(b => b.source === '漫画源下载' && b.fileName === fileName)
+    return books.find(b => isLegacyDownload(b, uuid, comicId, fileName))
   } catch {
     return undefined
   }
@@ -200,6 +218,14 @@ export async function enqueue(input: {
   initDownloads()
   const chapterId = chapterRequestId(input.chapter)
   const id = taskId(input.uuid, input.comicId, input.chapter)
+  const fileName = safeFileName(`${input.comicTitle} - ${input.chapter.name || chapterId}.cbz`)
+  const active = downloadState.tasks.find(t => t.id === id)
+  if (active && (active.status === 'queued' || active.status === 'running')) {
+    return { task: active, skipped: false }
+  }
+
+  const downloaded = await findDownloadedBook(input.uuid, input.comicId, chapterId, fileName)
+  // 查库期间，另一次入队或重试可能已接管任务。
   const existing = downloadState.tasks.find(t => t.id === id)
   if (existing && (existing.status === 'queued' || existing.status === 'running')) {
     return { task: existing, skipped: false }
@@ -221,8 +247,6 @@ export async function enqueue(input: {
     updatedAt: Date.now(),
   })
 
-  const fileName = safeFileName(`${input.comicTitle} - ${input.chapter.name || chapterId}.cbz`)
-  const downloaded = await findDownloadedBook(input.uuid, input.comicId, chapterId, fileName)
   if (downloaded) {
     const task = existing ?? build()
     Object.assign(task, {
@@ -253,7 +277,7 @@ function schedule() {
 
 function pump() {
   while (running.size < MAX_PARALLEL) {
-    const next = downloadState.tasks.find(t => t.status === 'queued')
+    const next = downloadState.tasks.find(t => t.status === 'queued' && !running.has(t.id))
     if (!next) return
     void run(next)
   }
@@ -419,7 +443,11 @@ export async function clearFinished(only: 'failed' | 'done' | 'all' = 'all', wit
     try {
       const storage = await getStorage()
       for (const t of doneToDelete) {
-        if (t.bookId) await storage.deleteBook(t.bookId).catch(() => { /* 已删过就跳过 */ })
+        if (!t.bookId) continue
+        try {
+          const book = await storage.getBook(t.bookId)
+          if (book && matchesDownloadedBook(t, book)) await storage.deleteBook(book.id)
+        } catch { /* 单个文件删除失败不影响后续记录 */ }
       }
     } catch { /* 删除文件失败不阻断 */ }
   }

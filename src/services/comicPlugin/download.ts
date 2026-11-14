@@ -70,7 +70,11 @@ export function clearPauseFlag(key: string): void {
 
 /** 导出给下载中心: 查重时要算出同一个文件名做兜底匹配 */
 export function safeFileName(name: string): string {
-  return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'comic.cbz'
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim()
+  const suffix = cleaned.toLowerCase().endsWith('.cbz') ? cleaned.slice(-4) : ''
+  const stem = cleaned.slice(0, suffix ? -suffix.length : undefined)
+    .slice(0, 120 - suffix.length).replace(/[\uD800-\uDBFF]$/, '').trimEnd()
+  return stem + suffix || 'comic.cbz'
 }
 
 function imageMime(url: string): string {
@@ -244,14 +248,14 @@ export async function downloadChapterAsCbz(
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, pages.length) }, () => worker()))
 
-    if (isDownloadPaused(key)) {
-      report('cancelled', loaded, pages.length, 'paused')
-      return { ok: false, fileName: '', error: 'paused' }
+    const stopped = (): DownloadResult | undefined => {
+      const error = group.has(key) ? 'cancelled' : isDownloadPaused(key) ? 'paused' : undefined
+      if (!error) return
+      report('cancelled', loaded, pages.length, error)
+      return { ok: false, fileName: '', error }
     }
-    if (group.has(key)) {
-      report('cancelled', loaded, pages.length)
-      return { ok: false, fileName: '', error: 'cancelled' }
-    }
+    const stoppedBeforePacking = stopped()
+    if (stoppedBeforePacking) return stoppedBeforePacking
     if (failure) throw new Error(failure)
 
     report('packing', pages.length, pages.length)
@@ -260,7 +264,16 @@ export async function downloadChapterAsCbz(
       const bytes = images[i]
       if (bytes) entries.push({ name: pageFileName(pages[i], i, pages.length), bytes })
     }
-    const zipped = await packAsync(entries)
+    let zipped: Uint8Array
+    try {
+      zipped = await packAsync(entries)
+    } catch (err) {
+      const stoppedDuringPacking = stopped()
+      if (stoppedDuringPacking) return stoppedDuringPacking
+      throw err
+    }
+    const stoppedAfterPacking = stopped()
+    if (stoppedAfterPacking) return stoppedAfterPacking
 
     const title = (content.title || comicId).trim()
     const chapterName = (content.chapterName || target.name || chapterRequestId(target)).trim()
