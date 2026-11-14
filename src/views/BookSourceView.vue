@@ -442,8 +442,8 @@ function doImport(text: string) {
 }
 
 .card-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
   margin: 0 0 14px;
   display: flex;
   align-items: center;
@@ -451,10 +451,10 @@ function doImport(text: string) {
 }
 
 .count {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   background: var(--bg-secondary);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 1px 8px;
 }
 
@@ -476,10 +476,10 @@ function doImport(text: string) {
 input, textarea {
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 /* ---- 书源状态条 ---- */
@@ -493,7 +493,7 @@ input, textarea {
 }
 
 .source-bar-info {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -511,7 +511,7 @@ input, textarea {
 
 .search-input {
   flex: 1;
-  font-size: 15px;
+  font-size: var(--fs-md);
   padding: 10px 14px;
 }
 
@@ -521,14 +521,14 @@ input, textarea {
   margin: 20px auto 0;
   padding: 24px;
   border: 1px dashed var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
   text-align: center;
 }
 
 .import-tip {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -542,7 +542,7 @@ input, textarea {
   gap: 12px;
   margin: 18px 0;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .import-divider::before,
@@ -579,7 +579,7 @@ input, textarea {
   align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -596,29 +596,29 @@ input, textarea {
 }
 
 .book-name {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .src-badge {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--accent, #4f8cff);
   background: rgba(79, 140, 255, 0.12);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 1px 8px;
   white-space: nowrap;
 }
 
 .book-author {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin-top: 2px;
 }
 
 .book-last {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
   margin-top: 2px;
   overflow: hidden;
@@ -640,8 +640,8 @@ input, textarea {
 .chip {
   padding: 5px 12px;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  font-size: 13px;
+  border-radius: var(--radius-xl);
+  font-size: var(--fs-sm);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -665,10 +665,10 @@ input, textarea {
   text-align: left;
   padding: 9px 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-base);
   cursor: pointer;
 }
 
@@ -699,7 +699,7 @@ input, textarea {
 }
 
 .reader-title {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -714,7 +714,7 @@ input, textarea {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -760,5 +760,5 @@ input, textarea {
   color: #ef4444;
 }
 
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-sm { padding: 4px 10px; font-size: var(--fs-xs); }
 </style>
