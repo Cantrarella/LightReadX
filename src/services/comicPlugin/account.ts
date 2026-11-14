@@ -157,6 +157,10 @@ export async function submitLogin(uuid: string, fnPath: string, values: Record<s
     if (message && /失败|错误|无效|不正确|invalid|failed|incorrect/i.test(message)) {
       throw new Error(message)
     }
+    // 登录成功, 本地打一个「已登录」标记。
+    // 部分插件 (如绅士漫画) 的 getUserInfoBundle 返回结构不被宿主识别成「已登录」,
+    // 导致登录后设置页仍显示未登录; 这里以「登录动作成功」为准兜底。
+    try { registry.setPluginConfigValue(uuid, '__loggedIn', true) } catch { /* 忽略 */ }
     return result
   })
 }
@@ -194,17 +198,32 @@ export function renderedUserInfo(data: Record<string, unknown>): Record<string, 
   return out
 }
 
+/** 清掉本地「已登录」标记 (退出登录 / 清除会话时调用) */
+export function clearLocalLogin(uuid: string): void {
+  try { registry.setPluginConfigValue(uuid, '__loggedIn', false) } catch { /* 忽略 */ }
+}
+
 /** 用户信息; 未登录时插件抛 unauthorized/普通错误, UI 层 catch 后显示登录入口 */
 export async function loadUserInfo(uuid: string): Promise<Record<string, unknown>> {
   return withPlugin(uuid, async host => {
-    if (!host.hasFn('getUserInfoBundle')) return {}
+    // 本地「已登录」标记: 登录动作成功时写入, 用于兜底识别那些
+    // getUserInfoBundle 返回结构不被宿主识别的插件 (登录成功但设置页误显未登录)。
+    const locallyLoggedIn = registry.getPluginConfig(uuid)['__loggedIn'] === true
+    if (!host.hasFn('getUserInfoBundle')) {
+      return locallyLoggedIn ? { loggedIn: true } : {}
+    }
     const raw = await host.call('getUserInfoBundle', {}, { timeoutMs: 30_000 })
     const root = obj(raw)
     const { userInfo, ...rest } = obj(root.data)
     // 插件有两种写法: data.userInfo 嵌套对象 / 字段直接平铺在 data 上。
     // 合并时要把 userInfo 本身摘掉, 否则设置页会把整个对象当字段渲染成 [object Object]。
     const base = { ...obj(userInfo), ...rest }
-    return { ...base, ...renderedUserInfo(base) }
+    const rendered = renderedUserInfo(base)
+    // 插件没给可识别的用户信息, 但本地有登录标记 → 仍视为已登录 (避免误显未登录)
+    if (!rendered.loggedIn && locallyLoggedIn && Object.keys(rendered).length === 0) {
+      return { ...base, ...rendered, loggedIn: true }
+    }
+    return { ...base, ...rendered }
   })
 }
 

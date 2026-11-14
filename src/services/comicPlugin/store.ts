@@ -350,6 +350,39 @@ export function storeState(entry: StoreEntry): 'new' | 'update' | 'installed' {
     : 'installed'
 }
 
+/** 一个可更新的插件 (已安装 + 商店有更高版本) */
+export interface StoreUpdate {
+  entry: StoreEntry
+  installed: InstalledComicPlugin
+  /** 当前版本 */
+  currentVersion: string
+}
+
+/**
+ * 检查所有已安装插件是否有更新。
+ * 强制拉取商店索引 (不走缓存), 逐个比对已安装插件 (按 uuid / storeUuid 匹配商店条目),
+ * 用语义化版本比较判断商店版本是否更高。单个订阅源失败不拖全局。
+ */
+export async function checkUpdates(): Promise<StoreUpdate[]> {
+  const installed = listPlugins()
+  if (!installed.length) return []
+  const { entries } = await loadStore(true)
+  const byUuid = new Map<string, StoreEntry>()
+  for (const entry of entries) byUuid.set(entry.uuid, entry)
+
+  const out: StoreUpdate[] = []
+  for (const plugin of installed) {
+    const entry = byUuid.get(plugin.uuid) ?? byUuid.get(plugin.storeUuid ?? '')
+    if (!entry || !entry.version) continue
+    const current = plugin.storeVersion || plugin.version
+    if (!current) continue
+    if (compareVersion(entry.version, current) > 0) {
+      out.push({ entry, installed: plugin, currentVersion: current })
+    }
+  }
+  return out
+}
+
 /** 候选 bundle 直链, 由先到后逐个尝试 */
 export function bundleCandidates(entry: StoreEntry): string[] {
   const urls: string[] = []
@@ -443,6 +476,8 @@ export function looksLikeBundle(text: string): boolean {
 export interface StoreInstallResult {
   plugin: InstalledComicPlugin
   url: string
+  /** 插件自述 uuid 与商店索引 uuid 不一致 (uuid 变更), UI 应提示用户 */
+  uuidChanged: boolean
 }
 
 /** 有些仓库不提交构建产物, 只发 Release; 从 release 页面抓资源名, 绕开 GitHub API 限流 */
@@ -490,7 +525,9 @@ export async function installStoreEntry(entry: StoreEntry): Promise<StoreInstall
           storeUuid: entry.uuid,
           storeVersion: entry.version,
         })
-        return { plugin, url }
+        // 插件自述 uuid 与索引 uuid 不一致: uuid 变更, 提示用户 (可能换壳/改名导致识别漂移)
+        const uuidChanged = !!plugin.uuid && !!entry.uuid && plugin.uuid !== entry.uuid
+        return { plugin, url, uuidChanged }
       } catch (e: any) {
         errors.push(e?.message ?? String(e))
       }

@@ -10,7 +10,7 @@ import { t } from '../i18n'
 import { toast } from '../services/toast'
 import { getPlugin, isUnauthorizedError } from '../services/comicPlugin'
 import {
-  loadCapabilities, loadLoginBundle, loadPluginSettings, loadUserInfo,
+  clearLocalLogin, loadCapabilities, loadLoginBundle, loadPluginSettings, loadUserInfo,
   runCapability, saveSettingValue, submitLogin,
   type PluginCapability, type PluginLoginBundle, type PluginSettingsBundle,
 } from '../services/comicPlugin/account'
@@ -122,6 +122,10 @@ async function doCapability(cap: PluginCapability) {
   try {
     await runCapability(uuid, cap.fnPath)
     notice.value = cap.title
+    // 退出登录 / 清除会话类动作成功后, 清掉本地「已登录」标记, 避免下次误判
+    if (/退出|登出|注销|清除会话|clear.?session|logout|sign.?out/i.test(`${cap.key} ${cap.title}`)) {
+      clearLocalLogin(uuid)
+    }
     await loadAll()
   } catch (e) { error.value = messageOf(e) }
 }

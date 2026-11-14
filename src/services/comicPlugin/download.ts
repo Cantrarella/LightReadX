@@ -27,6 +27,11 @@ export interface DownloadOptions {
   cacheKey?: string
   /** 单页下载失败的最大重试次数 (默认 3, 指数退避) */
   maxPageRetries?: number
+  /** 单章内并发下载页数 (覆盖插件默认); 不传则用插件声明值 */
+  concurrency?: number
+  /** 休息/防封: 每下 restEvery 张停 restFor 毫秒; 0 或省略则不休 */
+  restEvery?: number
+  restFor?: number
 }
 
 export interface DownloadResult {
@@ -163,7 +168,9 @@ export async function downloadChapterAsCbz(
     const pages = content.pages
     if (!pages.length) throw new Error('该章节没有图片')
 
-    const concurrency = await downloadConcurrency(host)
+    const concurrency = options.concurrency ?? (await downloadConcurrency(host))
+    const restEvery = options.restEvery ?? 0
+    const restFor = options.restFor ?? 0
     const images: Array<Uint8Array | undefined> = new Array(pages.length)
     let cursor = 0
     let loaded = 0
@@ -190,6 +197,20 @@ export async function downloadChapterAsCbz(
       while (!group.has(key) && !isDownloadPaused(key) && !failure) {
         const index = cursor++
         if (index >= pages.length) return
+        // 休息防封: 每下 restEvery 张停一会儿 (在下这张之前检查)
+        if (restEvery > 0 && index > 0 && index % restEvery === 0) {
+          report('images', loaded, pages.length, `防封休息 ${Math.round(restFor / 1000)}s…`)
+          await new Promise<void>(resolve => {
+            const started = Date.now()
+            const timer = setInterval(() => {
+              if (group.has(key) || isDownloadPaused(key) || Date.now() - started >= restFor) {
+                clearInterval(timer)
+                resolve()
+              }
+            }, 200)
+          })
+          if (group.has(key) || isDownloadPaused(key)) return
+        }
         let bytes: Uint8Array | undefined
         let lastError: unknown
         // 单页自动重试 (指数退避), 超过次数才记失败

@@ -80,8 +80,12 @@ async function install(entry: StoreEntry) {
   busyUuid.value = entry.uuid
   loadingText.value = t('comics.storeInstalling')
   try {
-    const { plugin } = await installStoreEntry(entry)
-    toast(t('comics.storeInstallSuccess', { name: plugin.name || entry.name }), 'success')
+    const { plugin, uuidChanged } = await installStoreEntry(entry)
+    if (uuidChanged) {
+      toast(t('comics.storeUuidChanged', { name: plugin.name || entry.name }), 'info', 7000)
+    } else {
+      toast(t('comics.storeInstallSuccess', { name: plugin.name || entry.name }), 'success')
+    }
     entries.value = [...entries.value]
   } catch (e: any) {
     toast(e?.message ?? t('common.unknownError'), 'error', 6000)

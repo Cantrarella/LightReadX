@@ -3,7 +3,7 @@
  * 下载页: 漫画章节下载的全局任务列表。
  * 进行中看进度, 失败/中断能重试, 完成的直接跳本地阅读器。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { useLibrary } from '../stores/library'
@@ -15,6 +15,7 @@ import {
   initDownloads, remove, retry, cancel, pause, resume, pauseAll, resumeAll,
   type DownloadTask,
 } from '../services/comicPlugin/downloadCenter'
+import { exportBookToPdf, openBookFolder } from '../services/comicPlugin/export'
 
 const router = useRouter()
 const library = useLibrary()
@@ -80,6 +81,70 @@ async function clearDoneWithFiles() {
 
 function retryAll() {
   for (const task of failedList.value) retry(task.id)
+}
+
+// ---- 导出 (CBZ → PDF) ----
+const selected = reactive(new Set<string>())
+const exporting = reactive(new Set<string>())
+
+/** 可导出的已完成任务: 书还在藏书里 */
+const exportableDone = computed(() => doneList.value.filter(t => !bookMissing(t)))
+
+const allSelected = computed(() =>
+  exportableDone.value.length > 0 && exportableDone.value.every(t => selected.has(t.id)),
+)
+
+function toggleSelect(id: string) {
+  if (selected.has(id)) selected.delete(id)
+  else selected.add(id)
+}
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    for (const t of exportableDone.value) selected.delete(t.id)
+  } else {
+    for (const t of exportableDone.value) selected.add(t.id)
+  }
+}
+
+function selectedBookIds(): string[] {
+  return exportableDone.value.filter(t => selected.has(t.id) && t.bookId).map(t => t.bookId as string)
+}
+
+async function exportSingle(task: DownloadTask) {
+  if (!task.bookId || exporting.has(task.id)) return
+  exporting.add(task.id)
+  try {
+    const result = await exportBookToPdf(task.bookId, () => { /* 单本进度不单独展示 */ })
+    if (result.ok) toast(t('downloads.exportDone'), 'success')
+    else if (result.error !== '已取消') toast(`${t('downloads.exportFailed')}: ${result.error}`, 'error')
+  } finally {
+    exporting.delete(task.id)
+  }
+}
+
+async function exportSelected() {
+  const ids = selectedBookIds()
+  if (!ids.length) { toast(t('downloads.noSelection'), 'info'); return }
+  // 逐本导出, 每本走一次系统「另存为」对话框
+  for (const task of exportableDone.value) {
+    if (!selected.has(task.id) || !task.bookId) continue
+    exporting.add(task.id)
+    try {
+      const result = await exportBookToPdf(task.bookId, () => { /* 批量进度逐本提示 */ })
+      if (!result.ok && result.error !== '已取消') toast(`${t('downloads.exportFailed')}: ${result.error}`, 'error')
+    } finally {
+      exporting.delete(task.id)
+    }
+  }
+  selected.clear()
+  toast(t('downloads.exportDone'), 'success')
+}
+
+async function openFolder(task: DownloadTask) {
+  if (!task.bookId) return
+  const result = await openBookFolder(task.bookId)
+  if (!result.ok) toast(`${t('downloads.exportFailed')}: ${result.error}`, 'error')
 }
 </script>
 
@@ -156,9 +221,20 @@ function retryAll() {
     </section>
 
     <section v-if="doneList.length" class="group">
-      <h2 class="group-title">{{ t('downloads.groupDone') }} <span class="badge">{{ doneList.length }}</span></h2>
+      <div class="group-head">
+        <h2 class="group-title">{{ t('downloads.groupDone') }} <span class="badge">{{ doneList.length }}</span></h2>
+        <div class="group-actions">
+          <button v-if="exportableDone.length" class="btn btn-ghost" @click="toggleSelectAll">{{ t('downloads.selectAll') }}</button>
+          <button v-if="exportableDone.length" class="btn btn-primary" :disabled="!selectedBookIds().length" @click="exportSelected">
+            {{ selectedBookIds().length ? t('downloads.exportSelectedCount', { count: selectedBookIds().length }) : t('downloads.exportSelected') }}
+          </button>
+        </div>
+      </div>
       <div class="task-list">
         <div v-for="task in doneList" :key="task.id" class="task done">
+          <label v-if="!bookMissing(task)" class="task-check" @click.stop>
+            <input type="checkbox" :checked="selected.has(task.id)" @change="toggleSelect(task.id)" />
+          </label>
           <div class="task-main">
             <div class="task-title">{{ task.comicTitle }}<span class="task-chapter">{{ task.chapterName }}</span></div>
             <div class="task-reason" :class="{ missing: bookMissing(task) }">
@@ -168,6 +244,10 @@ function retryAll() {
           <div class="task-actions">
             <button v-if="bookMissing(task)" class="btn btn-primary" @click="retry(task.id)">{{ t('downloads.redownload') }}</button>
             <button v-else class="btn" @click="openBook(task)">{{ t('downloads.open') }}</button>
+            <button v-if="!bookMissing(task)" class="btn btn-ghost" :disabled="exporting.has(task.id)" @click="exportSingle(task)">
+              {{ exporting.has(task.id) ? t('downloads.exporting') : t('downloads.exportPdf') }}
+            </button>
+            <button v-if="!bookMissing(task)" class="btn btn-ghost" @click="openFolder(task)">{{ t('downloads.exportFolder') }}</button>
             <button class="btn btn-ghost" @click="remove(task.id)">{{ t('downloads.remove') }}</button>
           </div>
         </div>
@@ -207,7 +287,10 @@ function retryAll() {
 .queue-bar { height: 8px; }
 
 .group { margin-bottom: 26px; }
-.group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); margin: 0 0 12px; }
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.group-actions { display: flex; gap: 8px; flex: none; }
+.group-actions .btn { padding: 0 12px; font-size: 13px; }
+.group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); margin: 0; }
 .badge {
   font-size: 11px; font-weight: 600; color: var(--text-3);
   background: var(--surface-2); border-radius: 999px; padding: 1px 8px;
@@ -232,6 +315,8 @@ function retryAll() {
 .task-status { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
 .task-actions { display: flex; gap: 8px; flex: none; }
 .task-actions .btn { padding: 0 12px; font-size: 13px; }
+.task-check { display: flex; align-items: center; flex: none; cursor: pointer; }
+.task-check input { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
 
 .bar-track { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .bar-fill { height: 100%; background: var(--brand); border-radius: 999px; transition: width 0.25s ease; }

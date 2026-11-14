@@ -15,6 +15,8 @@ export const router = createRouter({
     { path: '/comics/source/:uuid', component: () => import('../views/ComicSourceView.vue') },
     // 在线漫画阅读走 /read 前缀, 复用沉浸式外壳 (无侧栏, 顶栏自动隐藏)
     { path: '/read/comic/:uuid/:comicId/:chapterId', component: () => import('../views/ComicReaderView.vue') },
+    // 本地漫画 (CBZ/CBR) 也走漫画阅读器: 能放大、默认单页, 不再用图书 foliate 阅读器
+    { path: '/read/comic-local/:id', component: () => import('../views/ComicReaderView.vue') },
     { path: '/read-paper/:id', component: () => import('../views/PaperReaderView.vue') },
     { path: '/read/:id', component: () => import('../views/ReaderView.vue') },
     // 旧版 /read-pdf 已并入论文阅读器 (PDF 统一引擎)

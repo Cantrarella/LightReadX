@@ -15,6 +15,8 @@ import { cacheDropTask } from './downloadCache'
 import { notifyDownloadDone } from './notify'
 import { chapterKey, chapterRequestId } from './normalize'
 import { getStorage } from '../../storage'
+import { useSettings } from '../../stores/settings'
+import { useLibrary } from '../../stores/library'
 import type { BookMeta } from '../../storage/types'
 import type { ComicChapter } from './types'
 
@@ -56,6 +58,22 @@ export const downloadState = reactive({
 
 const running = new Set<string>()
 let pumpScheduled = false
+
+/** 读取漫画下载偏好 (并发 / 休息防封), 供下载循环使用 */
+function downloadPrefs() {
+  try {
+    const s = useSettings()
+    const cd = s.comicDownload
+    return {
+      concurrency: Math.min(16, Math.max(1, Number(cd?.concurrency) || 8)),
+      rest: !!cd?.rest,
+      restEvery: Math.max(1, Number(cd?.restEvery) || 30),
+      restFor: Math.max(1, Number(cd?.restFor) || 10),
+    }
+  } catch {
+    return { concurrency: 8, rest: false, restEvery: 30, restFor: 10 }
+  }
+}
 
 function load(): DownloadTask[] {
   try {
@@ -254,6 +272,9 @@ async function run(task: DownloadTask) {
       taskGroupKey: task.id,
       cacheKey: task.id,
       maxPageRetries: PAGE_RETRIES,
+      concurrency: downloadPrefs().concurrency,
+      restEvery: downloadPrefs().rest ? downloadPrefs().restEvery : 0,
+      restFor: downloadPrefs().rest ? downloadPrefs().restFor * 1000 : 0,
       onProgress: progress => patch(task.id, {
         phase: progress.phase,
         loaded: progress.loaded,
@@ -268,6 +289,8 @@ async function run(task: DownloadTask) {
       })
       // 完成, 清掉断点缓存
       void cacheDropTask(task.id)
+      // 入库后立即刷新书库, 让下载页的「打开」按钮识别到新书 (否则误判为「已移除」, 2026-11-14 用户反馈)
+      void useLibrary().refresh().catch(() => { /* 刷新失败不影响下载完成标记 */ })
       // 完成通知 (队列里还有其他待跑的就提示「继续」, 全跑完就提示「全部完成」)
       const stillActive = downloadState.tasks.some(t => t.status === 'queued' || t.status === 'running' || t.status === 'paused')
       void notifyDownloadDone(

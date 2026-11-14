@@ -17,6 +17,7 @@ import {
   installFromFile, installFromUrl, listPlugins, removePlugin, setPluginEnabled,
   type InstalledComicPlugin,
 } from '../services/comicPlugin'
+import { checkUpdates, installStoreEntry, type StoreUpdate } from '../services/comicPlugin/store'
 import BookCard from '../components/BookCard.vue'
 import AppModal from '../components/AppModal.vue'
 
@@ -48,12 +49,36 @@ const filtered = computed(() => {
   return [...list].sort((a, b) => (b.lastReadAt ?? b.addedAt) - (a.lastReadAt ?? a.addedAt))
 })
 
+// ---- 最近阅读 (本地漫画里最近打开的一本) ----
+const resumeComic = computed(() => {
+  if (keyword.value.trim()) return undefined
+  let last: BookMeta | undefined
+  for (const book of localComics.value) if (book.lastReadAt && (!last || book.lastReadAt > (last.lastReadAt ?? 0))) last = book
+  return last
+})
+const resumePercent = computed(() => Math.min(100, Math.max(0, Math.round((resumeComic.value?.progress ?? 0) * 100))))
+function agoText(at: number) {
+  const minutes = Math.floor((Date.now() - at) / 60000)
+  if (minutes < 1) return t('library.agoJustNow')
+  if (minutes < 60) return t('library.agoMinutes', { n: minutes })
+  if (minutes < 1440) return t('library.agoHours', { n: Math.floor(minutes / 60) })
+  return t('library.agoDays', { n: Math.floor(minutes / 1440) })
+}
+
 function openBook(book: BookMeta) {
   router.push(readerPath(book))
 }
 
 async function removeBook(book: BookMeta) {
   await library.removeBook(book.id)
+}
+
+/** 设为 / 取消私密 (与藏书页一致: noSync 标记, 同步时跳过) */
+async function setPrivate(book: BookMeta, on: boolean) {
+  const storage = await (await import('../storage')).getStorage()
+  await storage.updateBook(book.id, { noSync: on })
+  book.noSync = on || undefined
+  toast(on ? t('library.privateOn') : t('library.privateOff'), 'success')
 }
 
 async function onFiles(event: Event) {
@@ -151,6 +176,55 @@ function openSettings(plugin: InstalledComicPlugin) {
 function openStore() {
   router.push('/comics/store')
 }
+
+// ---- 插件更新检测 ----
+const checkingUpdates = ref(false)
+const updatingUuid = ref('')
+/** 有更新的插件, 按 uuid / storeUuid 建索引 */
+const updates = ref<Map<string, StoreUpdate>>(new Map())
+
+function updateFor(plugin: InstalledComicPlugin): StoreUpdate | undefined {
+  return updates.value.get(plugin.uuid) ?? updates.value.get(plugin.storeUuid ?? '')
+}
+
+async function checkForUpdates() {
+  if (checkingUpdates.value) return
+  checkingUpdates.value = true
+  try {
+    const list = await checkUpdates()
+    const map = new Map<string, StoreUpdate>()
+    for (const item of list) {
+      map.set(item.installed.uuid, item)
+      if (item.installed.storeUuid) map.set(item.installed.storeUuid, item)
+    }
+    updates.value = map
+    if (list.length) {
+      toast(t('comics.updatesFound', { count: list.length }), 'success')
+    } else {
+      toast(t('comics.noUpdates'), 'info')
+    }
+  } catch (e: any) {
+    toast(e?.message ?? t('common.unknownError'), 'error', 6000)
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
+async function updatePlugin(plugin: InstalledComicPlugin) {
+  const item = updateFor(plugin)
+  if (!item || updatingUuid.value) return
+  updatingUuid.value = plugin.uuid
+  try {
+    await installStoreEntry(item.entry)
+    updates.value = new Map([...updates.value].filter(([k]) => k !== plugin.uuid && k !== (plugin.storeUuid ?? '')))
+    refreshPlugins()
+    toast(t('comics.updateSuccess', { name: plugin.name }), 'success')
+  } catch (e: any) {
+    toast(e?.message ?? t('common.unknownError'), 'error', 6000)
+  } finally {
+    updatingUuid.value = ''
+  }
+}
 </script>
 
 <template>
@@ -175,6 +249,24 @@ function openStore() {
       <input ref="fileInput" type="file" accept=".cbz,.cbr,application/x-cbz,application/x-cbr" multiple hidden @change="onFiles" />
     </header>
 
+    <!-- 最近阅读 (本地漫画里最近打开的一本, 与藏书页继续阅读同形态) -->
+    <section v-if="activeTab === 'local' && resumeComic" class="resume card" role="button" tabindex="0" :aria-label="`${t('library.continueReading')}: ${resumeComic.title}`" @click="openBook(resumeComic)" @keydown.enter.prevent="openBook(resumeComic)">
+      <div class="resume-cover" aria-hidden="true">
+        <img v-if="library.coverUrls[resumeComic.id]" :src="library.coverUrls[resumeComic.id]" alt="" decoding="async" />
+        <span v-else class="resume-cover-title">{{ resumeComic.title }}</span>
+      </div>
+      <div class="resume-info">
+        <span class="resume-eyebrow">{{ t('library.continueReadingAgo', { time: agoText(resumeComic.lastReadAt!) }) }}</span>
+        <span class="resume-title">{{ resumeComic.title }}</span>
+        <span class="resume-author">{{ resumeComic.author || t('common.anonymous') }}</span>
+        <span class="resume-foot">
+          <span class="resume-track" aria-hidden="true"><span class="resume-fill" :style="{ width: `${Math.max(resumePercent, 2)}%` }" /></span>
+          <span class="resume-pct">{{ resumePercent }}%</span>
+          <span class="resume-go" aria-hidden="true">{{ t('library.continue') }}</span>
+        </span>
+      </div>
+    </section>
+
     <!-- 本地漫画与漫画源并排成两个标签页, 不再上下堆叠 -->
     <div class="comic-tabs" role="tablist">
       <button type="button" role="tab" class="comic-tab" :class="{ active: activeTab === 'local' }" :aria-selected="activeTab === 'local'" @click="activeTab = 'local'">
@@ -196,6 +288,7 @@ function openStore() {
           :cover-url="library.coverUrls[book.id]"
           @open="openBook(book)"
           @remove="removeBook(book)"
+          @toggle-private="setPrivate(book, !book.noSync)"
         />
       </div>
       <div v-else class="empty">
@@ -214,6 +307,10 @@ function openStore() {
       <div class="section-head">
         <span v-if="plugins.length" class="count">{{ t('comics.sourceCount', { count: plugins.length }) }}</span>
         <div class="spacer" />
+        <button class="btn" :disabled="checkingUpdates || !plugins.length" @click="checkForUpdates">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          {{ checkingUpdates ? t('comics.checkingUpdates') : t('comics.checkUpdates') }}
+        </button>
         <button class="btn" @click="showInstall = true">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
           {{ t('comics.installSource') }}
@@ -232,12 +329,16 @@ function openStore() {
                 {{ plugin.name }}
                 <span v-if="plugin.version" class="source-version">v{{ plugin.version }}</span>
                 <span v-if="!plugin.enabled" class="source-badge">{{ t('comics.disabled') }}</span>
+                <span v-if="updateFor(plugin)" class="source-badge source-update-badge">{{ t('comics.hasUpdate') }}</span>
               </div>
               <p class="source-desc">{{ plugin.describe || plugin.origin }}</p>
             </div>
           </div>
           <div class="source-actions">
             <button class="btn btn-primary" :disabled="!plugin.enabled" @click="openSource(plugin)">{{ t('comics.openSource') }}</button>
+            <button v-if="updateFor(plugin)" class="btn btn-update" :disabled="updatingUuid === plugin.uuid" @click="updatePlugin(plugin)">
+              {{ updatingUuid === plugin.uuid ? t('comics.updating') : t('comics.updateTo', { version: updateFor(plugin)!.entry.version }) }}
+            </button>
             <button class="btn" @click="openSettings(plugin)">{{ t('comics.pluginSettings') }}</button>
             <button class="btn" @click="togglePlugin(plugin)">{{ plugin.enabled ? t('comics.disable') : t('comics.enable') }}</button>
             <button class="btn btn-ghost" @click="uninstall(plugin)">{{ t('comics.uninstall') }}</button>
@@ -310,6 +411,48 @@ function openStore() {
 .search { width: 100%; height: var(--control-h); padding: 0 30px 0 34px; font-size: 13px; border-color: transparent; border-radius: var(--radius-pill); background: var(--surface-2); }
 .toolbar .btn { padding: 0 12px; font-size: 13px; }
 .comic-section { margin-top: 12px; }
+
+/* 最近阅读 (与藏书页继续阅读同形态) */
+.resume {
+  display: flex; gap: 14px; max-width: 560px; margin: 18px 0 4px;
+  padding: 14px; border: none; border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm); cursor: pointer;
+}
+.resume:hover { box-shadow: var(--shadow-md); }
+.resume:active { background: var(--surface-2); }
+.resume:focus-visible { outline: none; box-shadow: var(--ring); }
+.resume-cover {
+  position: relative; flex-shrink: 0; width: 64px; aspect-ratio: 2 / 3;
+  border-radius: 3px 5px 5px 3px; overflow: hidden;
+  background: var(--cover-paper-0); color: var(--cover-ink-0); box-shadow: var(--cover-shadow);
+}
+.resume-cover::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--cover-edge);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.12) 0, rgba(255, 255, 255, 0.14) 2.5%, transparent 6%);
+}
+.resume-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.resume-cover-title {
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+  padding: 10px 8px; font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+  font-size: 11px; font-weight: 600; line-height: 1.4;
+}
+.resume-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.resume-eyebrow { font-size: 12px; color: var(--text-3); }
+.resume-title {
+  margin-top: 4px; font-size: 16px; font-weight: 700; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.resume-author { margin-top: 2px; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resume-foot { margin-top: auto; padding-top: 10px; display: flex; align-items: center; gap: 10px; }
+.resume-track { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.resume-fill { display: block; height: 100%; border-radius: 2px; background: var(--brand); }
+.resume-pct { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.resume-go {
+  flex-shrink: 0; height: 32px; padding: 0 14px; border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; background: var(--brand); color: var(--on-brand); font-size: 13px;
+}
+
 .comic-tabs { display: flex; gap: 4px; margin: 4px 0 0; border-bottom: 1px solid var(--line); }
 .comic-tab {
   display: inline-flex; align-items: center; gap: 8px;
@@ -356,6 +499,8 @@ function openStore() {
 .source-name { font-size: 14px; font-weight: 650; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
 .source-version { font-size: 11px; font-weight: 400; color: var(--text-3); }
 .source-badge { font-size: 11px; font-weight: 500; color: var(--text-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+.source-update-badge { color: var(--accent, currentColor); border-color: var(--accent, currentColor); }
+.btn-update { color: var(--accent, currentColor); }
 .source-desc { margin: 5px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-3); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .source-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .source-actions .btn { flex: 1; white-space: nowrap; }
