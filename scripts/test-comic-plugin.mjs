@@ -33,6 +33,9 @@ try {
 module.exports.default = {
   getInfo: async () => ({ name: 'Mini', uuid: 'mini-test', version: '1.0.0' }),
   echo: async (p) => p,
+  spin: () => { for (;;) {} },
+  spinAfterAwait: async () => { await Promise.resolve(); for (;;) {} },
+  spinMicrotasks: async () => { for (;;) await Promise.resolve() },
   hmac: async () => globalThis.crypto.createHmac('sha1', 'key').update('msg').digest('hex'),
   hmacB64: async () => globalThis.crypto.createHmac('sha256', 'key').update('msg').digest('base64'),
   hash: async () => globalThis.crypto.createHash('md5').update('msg').digest('hex'),
@@ -284,6 +287,16 @@ module.exports.default = {
   ])
   assert.equal(fast, 'fast', '快调用要拿到自己的结果')
   assert.equal(slowOne, 'slow', '慢调用要拿到自己的结果')
+
+  for (const [name, call] of [
+    ['module initialization', () => createComicPluginHost({ code: 'for (;;) {}', request: async () => { throw new Error('unexpected request') } })],
+    ['synchronous plugin code', () => host.call('spin', {}, { timeoutMs: 25 })],
+    ['promise continuation', () => host.call('spinAfterAwait', {}, { timeoutMs: 25 })],
+    ['unbounded microtasks', () => host.call('spinMicrotasks', {}, { timeoutMs: 25 })],
+  ]) {
+    await assert.rejects(call, /超时/, name)
+  }
+  assert.deepEqual(await host.call('echo', { stillAlive: true }), { stillAlive: true })
 
   host.dispose()
   await assert.rejects(() => host.call('getInfo', {}), /已释放/)

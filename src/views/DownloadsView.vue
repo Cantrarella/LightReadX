@@ -12,7 +12,7 @@ import { toast } from '../services/toast'
 import { askConfirm, deleteConfirmOptions } from '../services/confirm'
 import {
   clearFinished, downloadState, failedTasks, finishedTasks, queueSummary,
-  initDownloads, remove, retry, cancel, pause, resume, pauseAll, resumeAll,
+  initDownloads, matchesDownloadedBook, remove, retry, cancel, pause, resume, pauseAll, resumeAll,
   type DownloadTask,
 } from '../services/comicPlugin/downloadCenter'
 import { exportBookToPdf, openBookFolder } from '../services/comicPlugin/export'
@@ -53,14 +53,14 @@ function statusText(task: DownloadTask): string {
 }
 
 function openBook(task: DownloadTask) {
-  const book = library.books.find(b => b.id === task.bookId)
+  const book = library.books.find(b => matchesDownloadedBook(task, b))
   if (book) { void router.push(readerPath(book)); return }
   void router.push('/library')
 }
 
 /** 记录标着已完成, 但书已经被用户从藏书删掉了 —— 这时给「重新下载」而不是「打开」 */
 function bookMissing(task: DownloadTask): boolean {
-  return task.status === 'done' && !library.books.some(b => b.id === task.bookId)
+  return task.status === 'done' && !library.books.some(b => matchesDownloadedBook(task, b))
 }
 
 function clearOnly(only: 'failed' | 'done' | 'all') {

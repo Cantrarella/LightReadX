@@ -14,6 +14,8 @@
     "test:comic-store-net": "node scripts/test-comic-store-net.mjs",
     "test:comic-detail": "node scripts/test-comic-detail.mjs",
     "test:comic-account": "node scripts/test-comic-account.mjs",
+    "test:comic-downloads": "node --test scripts/test-comic-downloads.mjs scripts/test-comic-download-archive.mjs",
+    "test:comic-reader": "node --test scripts/test-comic-reader.mjs",
     "test:book-sources": "node --experimental-strip-types --test scripts/test-catalog-errors.mjs scripts/test-open-library.mjs scripts/test-internet-archive.mjs scripts/test-philosophy-archive.mjs scripts/test-web-book-sources.mjs scripts/test-opds-download.mjs scripts/test-github-books.mjs scripts/test-book-query.mjs scripts/test-wendian.mjs",
     "test:archive": "node scripts/test-library-archive.mjs",
     "e2e:mobile": "node scripts/e2e-mobile.mjs",

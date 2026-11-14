@@ -79,6 +79,26 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   const engine = await getEngine()
   const runtime = engine.newRuntime()
   const ctx = runtime.newContext()
+  const executionBudgetMs = 1_000
+  let executionDeadline = Infinity
+  let interrupted = false
+
+  runtime.setInterruptHandler(() => {
+    if (performance.now() < executionDeadline) return false
+    interrupted = true
+    return true
+  })
+
+  function runQuickJS<T>(deadline: number, label: string, execute: () => T): T {
+    executionDeadline = Math.min(deadline, performance.now() + executionBudgetMs)
+    interrupted = false
+    try {
+      return execute()
+    } finally {
+      executionDeadline = Infinity
+      if (interrupted) throw new Error(`插件调用超时 (${label})`)
+    }
+  }
   const unwrap = (r: any, label: string) => {
     if (r.error) {
       const detail = ctx.dump(r.error)
@@ -87,12 +107,13 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     }
     return r.value
   }
-  const evalStr = (code: string, label: string): string => {
-    const h = unwrap(ctx.evalCode(code, label), label)
-    const value = ctx.getString(h)
-    h.dispose()
-    return value
-  }
+  const evaluate = (code: string, label: string, deadline = Infinity) =>
+    runQuickJS(deadline, label, () => unwrap(ctx.evalCode(code, label), label).dispose())
+  const evalStr = (code: string, label: string): string =>
+    runQuickJS(Infinity, label, () => {
+      const h = unwrap(ctx.evalCode(code, label), label)
+      try { return ctx.getString(h) } finally { h.dispose() }
+    })
   const expose = (name: string, fn: (...args: any[]) => any) => {
     const h = ctx.newFunction(name, fn)
     ctx.setProp(ctx.global, name, h)
@@ -216,7 +237,7 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     if (disposed) return
     try {
       const payload = JSON.stringify({ id, ok, value: ok ? value : null, error: ok ? null : value })
-      unwrap(ctx.evalCode(`globalThis.__qjsFinish(${payload})`, 'finish'), 'finish').dispose()
+      evaluate(`globalThis.__qjsFinish(${payload})`, 'finish')
     } catch (err) {
       options.log?.('[comic-plugin] 异步回调失败', err)
     }
@@ -292,8 +313,15 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     return ctx.newNumber(id)
   })
 
-  unwrap(ctx.evalCode(PLUGIN_PRELUDE, 'host-prelude'), 'host-prelude').dispose()
-  unwrap(ctx.evalCode(options.code, 'plugin.cjs'), 'plugin-load').dispose()
+  try {
+    evaluate(PLUGIN_PRELUDE, 'host-prelude')
+    evaluate(options.code, 'plugin.cjs')
+  } catch (err) {
+    disposed = true
+    try { ctx.dispose() } catch { /* 保留插件原始错误 */ }
+    try { runtime.dispose() } catch { /* 保留插件原始错误 */ }
+    throw err
+  }
 
   const fnAccess = (fnPath: string) =>
     fnPath.split('.').reduce(
@@ -308,7 +336,10 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     // 否则先完成的调用会被后开始的调用重置成「未完成」, 表现为重复同样的等待甚至一直等到超时
     const callId = ++callSeq
     const slot = `globalThis.__calls[${callId}]`
-    unwrap(ctx.evalCode(`
+    const timeoutMs = opts.timeoutMs ?? 60_000
+    const deadline = performance.now() + timeoutMs
+    try {
+      evaluate(`
 globalThis.__calls = globalThis.__calls || {};
 (() => {
   const slot = { done: false, result: null, error: null };
@@ -331,14 +362,15 @@ globalThis.__calls = globalThis.__calls || {};
     }
   })();
 })();
-`, 'call'), 'call').dispose()
+`, fnPath, deadline)
 
-    const timeoutMs = opts.timeoutMs ?? 60_000
-    const deadline = Date.now() + timeoutMs
-    let done = false
-    try {
-      while (Date.now() < deadline) {
-        runtime.executePendingJobs()
+      let done = false
+      while (performance.now() < deadline) {
+        if (disposed) throw new Error('插件宿主已释放')
+        runQuickJS(deadline, fnPath, () => {
+          const jobs = runtime.executePendingJobs(32)
+          if (jobs.error) unwrap(jobs, fnPath)
+        })
         if (evalStr(`String(${slot}.done)`, 'done') === 'true') { done = true; break }
         await new Promise(resolve => setTimeout(resolve, 3))
       }
@@ -360,7 +392,9 @@ globalThis.__calls = globalThis.__calls || {};
       if (out == null || out === 'null') return null as T
       return (opts.binary ? base64ToBytes(out) : JSON.parse(out)) as T
     } finally {
-      try { unwrap(ctx.evalCode(`delete globalThis.__calls[${callId}]`, 'cleanup'), 'cleanup').dispose() } catch { /* 忽略 */ }
+      if (!disposed) {
+        try { evaluate(`delete globalThis.__calls?.[${callId}]`, 'cleanup') } catch { /* 忽略 */ }
+      }
     }
   }
 
