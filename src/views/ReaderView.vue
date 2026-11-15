@@ -48,12 +48,13 @@ import { t } from '../i18n'
 import { siteUrlForRepoPath } from '../services/siteLinks'
 import { matchesMQ, MQ } from '../composables/useMediaQuery'
 import { searchBook, type SearchHit } from '../services/bookSearch'
-import { chatStream, aiConfigured, readerSystemPrompt, explainPrompt, plainAiText, providerById, type AiMessage } from '../services/ai'
+import { explainPrompt, plainAiText } from '../services/ai'
 import TocList, { type TocItem } from '../components/TocList.vue'
 import ReadingModePanel from '../components/ReadingModePanel.vue'
 import TypographyPanel, { type TypographySection } from '../components/TypographyPanel.vue'
 import ReadingModeMini from '../components/ReadingModeMini.vue'
 import { useReadingModes } from '../composables/useReadingModes'
+import { useReaderAi } from '../composables/useReaderAi'
 import TranslateSheet from '../components/TranslateSheet.vue'
 import { isWholeParagraph, paragraphRange } from '../services/selectParagraph'
 import { zhConvertController } from '../services/zhConvert'
@@ -348,54 +349,14 @@ const searchOpts = reactive({ caseSensitive: false, wholeWord: false, regex: fal
 let searchSession = 0
 
 // ---- AI 阅读助手 ----
-const aiMessages = ref<Array<{ role: 'user' | 'assistant'; content: string }>>([])
-const aiInput = ref('')
-const aiStreaming = ref(false)
-const aiListEl = ref<HTMLElement>()
-let aiSession = 0
-
-const aiReady = () => aiConfigured()
-
-function aiScrollToEnd() {
-  nextTick(() => {
-    if (aiListEl.value) aiListEl.value.scrollTop = aiListEl.value.scrollHeight
-  })
-}
-
-async function sendAi(text?: string) {
-  const content = (text ?? aiInput.value).trim()
-  if (!content || aiStreaming.value) return
-  if (!text) aiInput.value = ''
-  const session = ++aiSession
-  aiMessages.value.push({ role: 'user', content })
-  aiMessages.value.push({ role: 'assistant', content: '' })
-  const reply = aiMessages.value[aiMessages.value.length - 1]
-  aiStreaming.value = true
-  aiScrollToEnd()
-  try {
-    const history: AiMessage[] = [
-      { role: 'system', content: readerSystemPrompt(
-        { title: meta.value?.title, author: meta.value?.author },
-        chapterLabel.value,
-        settings.language,
-      ) },
-      // 只带最近 8 轮, 控制上下文长度
-      ...aiMessages.value.slice(0, -1).slice(-16).map(m => ({ role: m.role, content: m.content })),
-    ]
-    for await (const delta of chatStream(history)) {
-      if (session !== aiSession) return
-      reply.content += delta
-      aiScrollToEnd()
-    }
-    if (!reply.content) reply.content = t('ai.emptyReply')
-  } catch (e: any) {
-    if (session === aiSession) {
-      reply.content = `⚠️ ${t('ai.requestFailed')}: ${e?.message ?? e}`
-    }
-  } finally {
-    if (session === aiSession) aiStreaming.value = false
-  }
-}
+const ai = useReaderAi({
+  meta: () => meta.value,
+  chapterLabel: () => chapterLabel.value,
+  settings,
+})
+// 模板里要自动解包 ref, 解构到顶层 (composable 返回的 ref 藏在对象里不会自动 .value)
+// aiListEl 例外: 模板 ref 直接绑定 ai.aiListEl, 不单独解构 (避开 noUnusedLocals 误报)
+const { aiMessages, aiInput, aiStreaming, aiReady, sendAi, clearAi, stopAi, useTrialAi, openRegister } = ai
 
 /** 划词 → AI 解读 */
 function aiExplainSelection() {
@@ -405,30 +366,6 @@ function aiExplainSelection() {
   panel.value = 'ai'
   showBars()
   sendAi(explainPrompt(text, settings.language))
-}
-
-/** 一键改用内置试用通道 (服务端中转, 免注册免密钥) */
-function useTrialAi() {
-  const trial = providerById('trial')
-  settings.aiProvider = trial.id
-  settings.aiBaseUrl = trial.baseUrl
-  settings.aiModel = trial.defaultModel
-}
-
-async function openRegister() {
-  const { openDownload } = await import('../services/updater')
-  openDownload('https://cloud.siliconflow.cn/i/TxUlXG3u')
-}
-
-function clearAi() {
-  aiSession++
-  aiStreaming.value = false
-  aiMessages.value = []
-}
-
-function stopAi() {
-  aiSession++
-  aiStreaming.value = false
 }
 
 // 自动阅读: 翻页模式每隔 N 秒翻一页; 滚动模式 (含竖屏单页滚动) 匀速平滑滚动, 约 N 秒滚过一屏。
@@ -3769,7 +3706,7 @@ onBeforeUnmount(() => {
           <p class="ai-setup-alt">{{ t('ai.setupAlt') }}</p>
         </div>
         <template v-else>
-          <div ref="aiListEl" class="panel-body ai-list">
+          <div ref="ai.aiListEl" class="panel-body ai-list">
             <p v-if="!aiMessages.length" class="panel-empty">{{ t('ai.intro') }}</p>
             <div v-for="(m, i) in aiMessages" :key="i" class="ai-msg" :class="m.role">
               <div class="ai-bubble">{{ m.role === 'assistant' ? plainAiText(m.content) : m.content }}<span v-if="m.role === 'assistant' && aiStreaming && i === aiMessages.length - 1" class="ai-cursor">▍</span></div>
