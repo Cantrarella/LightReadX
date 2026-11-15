@@ -295,8 +295,6 @@ interface SettingsState {
   corsProxy: string
   /** 桌面端网络代理 (http:// 或 socks5://), 书源请求经此代理 */
   httpProxy: string
-  /** Calibre 书库文件夹路径 (桌面端) */
-  calibrePath: string
   /** 书库存储根目录 (桌面端), 空为默认应用数据目录 */
   libraryRoot: string
   /** 安卓: 阅读时音量键翻页 (上一页 / 下一页); 听书播放或打开面板时音量键照常调音量 */
@@ -395,7 +393,6 @@ const defaults: SettingsState = {
   doubaoAppId: '',
   corsProxy: '',
   httpProxy: '',
-  calibrePath: '',
   libraryRoot: '',
   volumeKeyTurn: false,
   usageStats: true,

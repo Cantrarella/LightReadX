@@ -6,11 +6,10 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { t } from '../../i18n'
 import { isTauri } from '../../storage/types'
-import { MIRROR_RELEASES_URL, RELEASES_URL, copyLink, openDownload } from '../../services/updater'
+import { copyLink, openDownload } from '../../services/updater'
 import { toast } from '../../services/toast'
 import { AUTHOR_WECHAT, detectPlatform, type PackageKind, type PlatformDownload, type PlatformId, type WechatGroup } from '../../services/aboutLinks'
 import { loadCommunity, loadPlatformDownloads } from '../../services/aboutLinksLoad'
-import { SITE_URL } from '../../services/siteLinks'
 import { consumeCommunityFocus } from '../../services/diagnostics'
 import DiagnosticsPanel from './DiagnosticsPanel.vue'
 
@@ -41,11 +40,8 @@ const wechatId = ref(AUTHOR_WECHAT)
 const groupState = ref<'loading' | 'ready'>('loading')
 const qrBroken = ref(false)
 
-/** 本机排第一, 其余按固定顺序 */
-const rows = computed(() => [
-  ...downloads.value.filter(d => d.platform === thisPlatform),
-  ...downloads.value.filter(d => d.platform !== thisPlatform),
-])
+/** 只显示本机平台 (桌面版=Windows / App 版=Android), 其余系统安装包不再展示 */
+const rows = computed(() => downloads.value.filter(d => d.platform === thisPlatform))
 
 const expiresText = computed(() => {
   if (!group.value) return ''
@@ -121,11 +117,6 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <p class="more-links">
-        <a href="javascript:void 0" @click="open(SITE_URL)">{{ t('settings.website') }}</a>
-        <a href="javascript:void 0" @click="open(RELEASES_URL)">{{ t('settings.downloadsAll') }}</a>
-        <a href="javascript:void 0" @click="open(MIRROR_RELEASES_URL)">{{ t('settings.downloadsMirror') }}</a>
-      </p>
     </section>
 
     <section class="block" aria-labelledby="about-community-title">
@@ -235,18 +226,6 @@ onMounted(async () => {
   border-radius: var(--radius);
   color: var(--text-3);
   font-size: var(--fs-sm, 13px);
-}
-.more-links {
-  display: flex;
-  gap: var(--space-4);
-  margin: var(--space-2) 0 0;
-  font-size: var(--fs-sm, 13px);
-}
-.more-links a {
-  color: var(--text-2);
-}
-.more-links a:hover {
-  color: var(--brand);
 }
 .community {
   display: flex;

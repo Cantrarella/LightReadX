@@ -89,7 +89,6 @@ export const SETTINGS_SYNC_SPEC: SettingsSpec = {
   corsProxy: LOCAL,
   httpProxy: LOCAL,
   /** 本机路径 */
-  calibrePath: LOCAL,
   libraryRoot: LOCAL,
   /** 匿名统计的开关按设备 (关掉的设备不会因同步被重新打开) */
   usageStats: LOCAL,

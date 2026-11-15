@@ -691,7 +691,7 @@ async function clearReaderCache() {
 }
 
 async function clearDownloadRecords() {
-  const ok = await askConfirm(t('settings.storageClearDownloadsConfirm'), {
+  const ok = await askConfirm(t('settings.storageDownloadsConfirm'), {
     title: t('settings.storageClearDownloads'),
     confirmLabel: t('settings.storageClear'),
   })
@@ -1303,67 +1303,6 @@ const APPEARANCE_OPTIONS = [
     </section>
 
 
-    <!-- 存储: 在线漫画阅读缓存 / 下载记录 / 商店索引 -->
-    <section v-show="showSection('storage')" id="settings-storage" class="card section" aria-labelledby="settings-storage-heading">
-      <h2 id="settings-storage-heading" tabindex="-1">{{ t('settings.storage') }}</h2>
-      <p class="section-desc">{{ t('settings.storageDesc') }}</p>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.storageReaderCache') }}</div>
-          <div class="row-desc">{{ t('settings.storageReaderCacheDesc', { count: cacheInfo.count, size: cacheSizeText }) }}</div>
-        </div>
-        <button class="btn" :disabled="!cacheInfo.count" @click="clearReaderCache">{{ t('settings.storageClear') }}</button>
-      </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.storageDownloads') }}</div>
-          <div class="row-desc">{{ t('settings.storageDownloadsDesc', { total: downloadInfo.total, failed: downloadInfo.failed }) }}</div>
-        </div>
-        <button class="btn" :disabled="!downloadInfo.total" @click="clearDownloadRecords">{{ t('settings.storageClear') }}</button>
-      </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.storageStoreIndex') }}</div>
-          <div class="row-desc">{{ t('settings.storageStoreIndexDesc') }}</div>
-        </div>
-        <button class="btn" @click="clearStoreIndex">{{ t('settings.storageClear') }}</button>
-      </div>
-
-      <h3 class="subheading">{{ t('settings.comicDownload') }}</h3>
-      <p class="sub-desc">{{ t('settings.comicDownloadDesc') }}</p>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.comicConcurrency') }}</div>
-          <div class="row-desc">{{ t('settings.comicConcurrencyDesc', { n: 8 }) }}<span class="val-badge">{{ settings.comicDownload.concurrency }}</span></div>
-        </div>
-        <input v-model.number="settings.comicDownload.concurrency" class="slider" type="range" min="1" max="16" step="1" :aria-label="t('settings.comicConcurrency')" />
-      </div>
-      <label class="toggle-row">
-        <span class="toggle-text">
-          <span class="row-title">{{ t('settings.comicRest') }}</span>
-          <span class="row-desc">{{ t('settings.comicRestDesc') }}</span>
-        </span>
-        <span class="switch">
-          <input v-model="settings.comicDownload.rest" type="checkbox" role="switch" :aria-label="t('settings.comicRest')" :aria-checked="settings.comicDownload.rest" />
-          <span class="switch-track" aria-hidden="true"></span>
-        </span>
-      </label>
-      <div v-if="settings.comicDownload.rest" class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.comicRestEvery') }}</div>
-          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restEvery }}</span></div>
-        </div>
-        <input v-model.number="settings.comicDownload.restEvery" class="slider" type="range" min="5" max="100" step="5" :aria-label="t('settings.comicRestEvery')" />
-      </div>
-      <div v-if="settings.comicDownload.rest" class="row">
-        <div class="row-text">
-          <div class="row-title">{{ t('settings.comicRestFor') }}</div>
-          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restFor }}s</span></div>
-        </div>
-        <input v-model.number="settings.comicDownload.restFor" class="slider" type="range" min="1" max="120" step="1" :aria-label="t('settings.comicRestFor')" />
-      </div>
-    </section>
-
     <!-- 功能: 可选功能开关 (默认关) -->
     <section v-show="showSection('features')" id="settings-features" class="card section" aria-labelledby="settings-features-heading">
       <h2 id="settings-features-heading" tabindex="-1">{{ t('settings.features') }}</h2>
@@ -1589,6 +1528,67 @@ const APPEARANCE_OPTIONS = [
         </div>
       </div>
       <div v-if="busy && busyScope === 'local'" class="busy">{{ busy }}</div>
+    </section>
+
+    <!-- 存储: 在线漫画阅读缓存 / 下载记录 / 商店索引 -->
+    <section v-show="showSection('storage')" id="settings-storage" class="card section" aria-labelledby="settings-storage-heading">
+      <h2 id="settings-storage-heading" tabindex="-1">{{ t('settings.storage') }}</h2>
+      <p class="section-desc">{{ t('settings.storageDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageReaderCache') }}</div>
+          <div class="row-desc">{{ t('settings.storageReaderCacheDesc', { count: cacheInfo.count, size: cacheSizeText }) }}</div>
+        </div>
+        <button class="btn" :disabled="!cacheInfo.count" @click="clearReaderCache">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageDownloads') }}</div>
+          <div class="row-desc">{{ t('settings.storageDownloadsDesc', { total: downloadInfo.total, failed: downloadInfo.failed }) }}</div>
+        </div>
+        <button class="btn" :disabled="!downloadInfo.total" @click="clearDownloadRecords">{{ t('settings.storageClear') }}</button>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.storageStoreIndex') }}</div>
+          <div class="row-desc">{{ t('settings.storageStoreIndexDesc') }}</div>
+        </div>
+        <button class="btn" @click="clearStoreIndex">{{ t('settings.storageClear') }}</button>
+      </div>
+
+      <h3 class="subheading">{{ t('settings.comicDownload') }}</h3>
+      <p class="sub-desc">{{ t('settings.comicDownloadDesc') }}</p>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicConcurrency') }}</div>
+          <div class="row-desc">{{ t('settings.comicConcurrencyDesc', { n: 8 }) }}<span class="val-badge">{{ settings.comicDownload.concurrency }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.concurrency" class="slider" type="range" min="1" max="16" step="1" :aria-label="t('settings.comicConcurrency')" />
+      </div>
+      <label class="toggle-row">
+        <span class="toggle-text">
+          <span class="row-title">{{ t('settings.comicRest') }}</span>
+          <span class="row-desc">{{ t('settings.comicRestDesc') }}</span>
+        </span>
+        <span class="switch">
+          <input v-model="settings.comicDownload.rest" type="checkbox" role="switch" :aria-label="t('settings.comicRest')" :aria-checked="settings.comicDownload.rest" />
+          <span class="switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestEvery') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restEvery }}</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restEvery" class="slider" type="range" min="5" max="100" step="5" :aria-label="t('settings.comicRestEvery')" />
+      </div>
+      <div v-if="settings.comicDownload.rest" class="row">
+        <div class="row-text">
+          <div class="row-title">{{ t('settings.comicRestFor') }}</div>
+          <div class="row-desc"><span class="val-badge">{{ settings.comicDownload.restFor }}s</span></div>
+        </div>
+        <input v-model.number="settings.comicDownload.restFor" class="slider" type="range" min="1" max="120" step="1" :aria-label="t('settings.comicRestFor')" />
+      </div>
     </section>
 
     <!-- 网络 -->
