@@ -3,9 +3,6 @@ import { engineDensity } from '../services/dianjingDensity.ts'
 import AppSelect from '../../components/AppSelect.vue'
 import AppModal from '../../components/AppModal.vue'
 import BookCover from '../components/BookCover.vue'
-import { pingUsage } from '../../services/usageStats.ts'
-import { noteDjReading } from '../../services/usageCounters.ts'
-import type { DjLevelIdx, DjState } from '../../services/usageStatsCore.ts'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getStorage, type AnnotationRec, type BookMeta } from '../../storage/index.ts'
@@ -278,27 +275,7 @@ const ttsVoices = ref<{ name: string; lang: string }[]>([])
 let sectionLoadResolvers: Array<() => void> = []
 
 // 翻页 / 位置变化 / 朗读推进时 ping: 正文在 iframe 里, 其中的操作不会冒泡到 window
-const { ping: pingReading, pingAuto: pingReadingAuto } = useReadingTimer(bookId, {
-  // 点睛阅读的使用统计 (按天汇总, 只记中文书): 这段时长按落库时的点睛状态计
-  onCredit: seconds => {
-    const st = djUsageState()
-    if (st) noteDjReading(seconds, st.state, st.level)
-  },
-})
-
-/** 当前的点睛状态 (使用统计): 关 / 词与词 / 重点词 / 智能; 非中文书返回 null */
-function djUsageState(): { state: DjState; level: DjLevelIdx | null } | null {
-  const m = lateModes.value
-  const d = lateDj.value
-  if (!m || !d || !m.keyWordsSupported.value) return null
-  const kind = m.guideKind.value
-  const density = settings.dianjing.density
-  const lvl: DjLevelIdx = density === 'low' ? 0 : density === 'high' ? 2 : 1
-  if (d.enabled.value) return { state: 3, level: kind === 'smart' ? lvl : null }
-  if (kind === 'boundary') return { state: 1, level: null }
-  if (kind === 'keywords') return { state: 2, level: lvl }
-  return { state: 0, level: null }
-}
+const { ping: pingReading, pingAuto: pingReadingAuto } = useReadingTimer(bookId)
 
 // 书内搜索 (VSCode 风格: 多关键词 / 正则 / 大小写 / 全词)
 const searchQuery = ref('')
@@ -3223,8 +3200,6 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', resetAutoScrollClock)
-  // 匿名使用统计: 今天打开过书 (每天一次, 设置 → 隐私 可关闭)
-  void pingUsage(true)
   // 手机切后台时背景音暂停, 但听书在播时跟随听书的后台策略
   ambient.setPauseWhenHidden(() => ttsState.value !== 'playing')
   window.addEventListener('keydown', handleKeydown)

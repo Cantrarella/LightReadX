@@ -300,8 +300,6 @@ interface SettingsState {
   /** 安卓: 阅读时音量键翻页 (上一页 / 下一页); 听书播放或打开面板时音量键照常调音量 */
   volumeKeyTurn: boolean
   /** AI 助手: 预设 id / 接口地址 / 密钥 / 模型 */
-  /** 匿名使用统计 (设置 → 隐私); 默认开启, 可关闭, 见 services/usageStats.ts */
-  usageStats: boolean
   /** 设置随同步 (WebDAV / 轻阅账号) 带到其他设备; 设备相关项 (存储路径、代理、本机字体等) 不同步 */
   syncSettings: boolean
   /** 同时同步密码与密钥 (WebDAV 应用密码、AI API Key): 会存到同步端, 默认关闭, 需用户显式开启 */
@@ -395,7 +393,6 @@ const defaults: SettingsState = {
   httpProxy: '',
   libraryRoot: '',
   volumeKeyTurn: false,
-  usageStats: true,
   syncSettings: true,
   syncSecrets: false,
   aiProvider: 'trial',

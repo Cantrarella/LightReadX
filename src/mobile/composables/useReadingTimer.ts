@@ -16,7 +16,6 @@ const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as con
  */
 export function useReadingTimer(
   bookId: string,
-  opts: { onCredit?: (seconds: number, at: number) => void } = {},
 ): { ping: () => void; pingAuto: () => void } {
   const library = useLibrary()
   const clock = createReadingClock(Date.now())
@@ -30,7 +29,6 @@ export function useReadingTimer(
     const seconds = clock.drain()
     if (seconds > 0) {
       library.addReadingTime(bookId, seconds, at)
-      try { opts.onCredit?.(seconds, at) } catch { /* 统计失败不影响计时 */ }
     }
   }
 

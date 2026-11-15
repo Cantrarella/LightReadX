@@ -5,7 +5,6 @@ import { AutoScrollClock, ScrollAccumulator } from '../services/autoScroll'
 import { AUTO_SPEED_LEVELS, AUTO_SPEED_STEPS, speedPosition, secondsAtPosition } from '../services/autoReadSpeed'
 import LevelSlider from '../components/LevelSlider.vue'
 import { TTS_RATE_MAX, TTS_RATE_MIN, TTS_RATE_MINOR_STOPS, TTS_RATE_STOPS, rateText } from '../services/ttsRate'
-import { pingUsage } from '../services/usageStats'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getStorage, isTauri, type BookMeta, type AnnotationRec } from '../storage'
@@ -3481,8 +3480,6 @@ function resetAutoScrollClock() { autoClock.reset() }
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', resetAutoScrollClock)
-  // 匿名使用统计: 今天打开过书 (每天一次, 设置 → 隐私 可关闭)
-  void pingUsage(true)
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   document.addEventListener('webkitfullscreenchange', onFullscreenChange as EventListener)

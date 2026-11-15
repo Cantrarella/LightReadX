@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { pingUsage } from './services/usageStats'
 import { localPack, localTtsAvailable, refreshLocalPack } from './services/localTts'
 import { useRoute, useRouter } from 'vue-router'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -157,8 +156,6 @@ onMounted(async () => {
     stopTransfer?.()
     stopTransfer = on ? startTransferPolling(() => router.push('/transfer')) : undefined
   }, { immediate: true })
-  // 匿名使用统计: 每天一次, 后台进行
-  void pingUsage()
   void recoverFromLocalTtsCrash()
 })
 
