@@ -176,6 +176,8 @@ export interface PluginResponse {
   ok: boolean
   url: string
   headers: Record<string, string>
-  /** 二进制统一以 base64 回传 (QuickJS 侧 btoa/atob 解码) */
-  bodyBase64: string
+  /** 二进制主通道: 宿主字节池直接回传字节, 沙箱里不做 base64 编解码 */
+  body?: Uint8Array
+  /** 兼容旧注入实现: 只给 base64 时由沙箱侧 atob 兜底解码 */
+  bodyBase64?: string
 }

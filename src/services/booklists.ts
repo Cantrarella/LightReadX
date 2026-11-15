@@ -1,5 +1,5 @@
 /**
- * 书单: 待找条目与藏书的匹配 / 自动关联、分享格式 (JSON 与纯文本)、推荐书单的校验.
+ * 书单: 待找条目与藏书的匹配 / 自动关联、分享格式 (JSON 与纯文本)、对外找书链接.
  * 纯函数, 只允许 `import type`, 以便在 node --experimental-strip-types 下直接测试. 设计见 docs/booklists.md.
  */
 import type { BooklistWantedRec } from '../storage/types'
@@ -339,7 +339,7 @@ export function shareToMarkdown(share: BooklistShare, lang: 'zh' | 'en' = 'zh'):
 export function parseShareObject(data: unknown): BooklistShare | null {
   if (!data || typeof data !== 'object') return null
   const d = data as Record<string, unknown>
-  // 也接受推荐书单文件 (title 代替 name)
+  // 也接受外部书单文件 (title 代替 name)
   const name = str(d.name, 100) ?? str(d.title, 100)
   if (!name || !Array.isArray(d.books)) return null
   if (d.format !== undefined && d.format !== SHARE_FORMAT) return null
@@ -429,95 +429,7 @@ export function shareFileName(name: string): string {
   return base + SHARE_FILE_SUFFIX
 }
 
-// ---- 推荐书单 ----
-
-export interface CuratedBook extends BooklistEntry {
-  wikidata?: string
-}
-
-export interface CuratedList {
-  id: string
-  title: string
-  description: string
-  en?: { title?: string; description?: string }
-  curator: string
-  tags: string[]
-  updated: string
-  source: { name: string; url: string; license: string }
-  books: CuratedBook[]
-}
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-export const CURATED_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/
-
-const httpUrl = (v: unknown): string | undefined => {
-  const s = str(v, 500)
-  if (!s) return undefined
-  try {
-    const u = new URL(s)
-    return u.protocol === 'https:' || u.protocol === 'http:' ? s : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** 校验一个推荐书单 (远程与自带共用); 不合格的条目丢弃, 整体不合格返回 null */
-export function validateCuratedList(raw: unknown): CuratedList | null {
-  if (!raw || typeof raw !== 'object') return null
-  const r = raw as Record<string, unknown>
-  const id = typeof r.id === 'string' && CURATED_ID_RE.test(r.id) ? r.id : undefined
-  const title = str(r.title, 100)
-  const curator = str(r.curator, 100)
-  const updated = typeof r.updated === 'string' && DATE_RE.test(r.updated) && Number.isFinite(Date.parse(r.updated)) ? r.updated : undefined
-  const src = r.source && typeof r.source === 'object' ? r.source as Record<string, unknown> : undefined
-  const source = src && str(src.name, 200) && httpUrl(src.url) && str(src.license, 100)
-    ? { name: str(src.name, 200)!, url: httpUrl(src.url)!, license: str(src.license, 100)! }
-    : undefined
-  if (!id || !title || !curator || !updated || !source || !Array.isArray(r.books)) return null
-  const books: CuratedBook[] = []
-  for (const item of r.books) {
-    const entry = cleanEntry(item)
-    if (!entry || !entry.author) continue
-    if (books.some(other => titleKey(other.title) === titleKey(entry.title) && authorsCompatible(other.author, entry.author))) continue
-    const book: CuratedBook = entry
-    const wd = (item as Record<string, unknown>).wikidata
-    if (typeof wd === 'string' && /^Q\d+$/.test(wd)) book.wikidata = wd
-    books.push(book)
-  }
-  if (!books.length) return null
-  const list: CuratedList = {
-    id,
-    title,
-    description: str(r.description, 1000) ?? '',
-    curator,
-    tags: Array.isArray(r.tags) ? r.tags.map(tag => str(tag, 30)).filter((tag): tag is string => !!tag).slice(0, 8) : [],
-    updated,
-    source,
-    books,
-  }
-  const en = r.en && typeof r.en === 'object' ? r.en as Record<string, unknown> : undefined
-  if (en && (str(en.title) || str(en.description))) {
-    list.en = {}
-    if (str(en.title, 100)) list.en.title = str(en.title, 100)
-    if (str(en.description, 1000)) list.en.description = str(en.description, 1000)
-  }
-  return list
-}
-
-export interface CuratedIndex {
-  updated: string
-  lists: string[]
-}
-
-export function parseCuratedIndex(raw: unknown): CuratedIndex | null {
-  if (!raw || typeof raw !== 'object') return null
-  const r = raw as Record<string, unknown>
-  const updated = typeof r.updated === 'string' && DATE_RE.test(r.updated) ? r.updated : ''
-  const lists = Array.isArray(r.lists)
-    ? [...new Set(r.lists.filter((id): id is string => typeof id === 'string' && CURATED_ID_RE.test(id)))]
-    : []
-  return updated && lists.length ? { updated, lists } : null
-}
+// ---- 找书 (个人书单「待找」条目用) ----
 
 /** 豆瓣读书搜索 (只链出, 不抓取) */
 export function doubanSearchUrl(title: string, author = ''): string {

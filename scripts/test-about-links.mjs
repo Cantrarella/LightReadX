@@ -1,12 +1,12 @@
 /**
- * 关于页全平台下载 + 读者群 (src/services/aboutLinks.ts): 两条版本线各取最新、镜像只认已校验版本、
- * 不信任外部地址、二维码过期即不显示。
+ * 关于页本机安装包下载 (src/services/aboutLinks.ts): 两条版本线各取最新、镜像只认已校验版本、
+ * 不信任外部地址。
  *
  *   npm run test:about-links
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { AUTHOR_WECHAT, COMMUNITY_BASE, detectPlatform, parseCommunity, parsePlatformReleases, parseWechatContact } from '../src/services/aboutLinks.ts'
+import { detectPlatform, parsePlatformReleases } from '../src/services/aboutLinks.ts'
 
 const GH = 'https://github.com/Cantrarella/LightReadX/releases/download/'
 const gh = (tag, names, extra = {}) => ({
@@ -84,26 +84,4 @@ test('detectPlatform marks this device; iOS has no package', () => {
   assert.equal(detectPlatform('Mozilla/5.0 (Windows NT 10.0; Win64; x64)'), 'windows')
   assert.equal(detectPlatform('Mozilla/5.0 (X11; Linux x86_64)'), 'linux')
   assert.equal(detectPlatform('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), null)
-})
-
-test('community: valid until expiry, only images under the community directory', () => {
-  const now = Date.parse('2026-10-27T12:00:00+08:00')
-  const ok = { wechatGroup: { name: 'LightRead 读者群', image: `${COMMUNITY_BASE}wechat-group-1a2b3c4d.png`, expiresAt: '2026-11-03T00:00:00+08:00' } }
-  assert.deepEqual(parseCommunity(ok, now), ok.wechatGroup)
-  assert.equal(parseCommunity(ok, Date.parse('2026-11-03T00:00:00+08:00')), null)
-  assert.equal(parseCommunity({ wechatGroup: { ...ok.wechatGroup, image: 'https://evil.example/qr.png' } }, now), null)
-  assert.equal(parseCommunity({ wechatGroup: { ...ok.wechatGroup, image: `${COMMUNITY_BASE}../x.png`.replace('..', 'a/..') } }, now), null)
-  assert.equal(parseCommunity({ wechatGroup: { ...ok.wechatGroup, expiresAt: 'soon' } }, now), null)
-  assert.equal(parseCommunity({ wechatGroup: { ...ok.wechatGroup, name: ' ' } }, now), null)
-  assert.equal(parseCommunity(null, now), null)
-})
-
-test('author WeChat: bundled default, remote override only when well-formed', () => {
-  assert.equal(AUTHOR_WECHAT, '1796060717')
-  assert.equal(parseWechatContact(null), AUTHOR_WECHAT)
-  assert.equal(parseWechatContact({}), AUTHOR_WECHAT)
-  assert.equal(parseWechatContact({ wechatContact: { id: ' lightread_cn ' } }), 'lightread_cn')
-  for (const bad of ['', 'a b c d e', 'x', '<script>', 'https://evil.example', 'a'.repeat(40)]) {
-    assert.equal(parseWechatContact({ wechatContact: { id: bad } }), AUTHOR_WECHAT, bad)
-  }
 })

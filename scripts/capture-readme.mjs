@@ -38,7 +38,7 @@ try {
   await page.evaluate(() => localStorage.setItem('lightread-settings', JSON.stringify({
     version: 14, language: 'zh', appearance: 'light', usageStats: false,
     aiProvider: 'custom', aiBaseUrl: 'https://readme-demo.invalid/v1', aiModel: 'readme-demo',
-    features: { recommendedBooklists: true }, dailyGoalMinutes: 30,
+    dailyGoalMinutes: 30,
     reader: { fontSize: 21, lineHeight: 1.9, maxColumnCount: 1, theme: 'sepia' },
     dianjing: { level: 'basic', density: 'normal' },
     readingMode: { wordGuide: { enabled: true, mark: 'keywords', color: 'teal' } },
@@ -62,8 +62,6 @@ try {
   await page.getByText('42', { exact: true }).first().waitFor()
   await shot('feature-reading-stats')
   await page.goto(`${base}/#/catalogs`)
-  await page.locator('.curated-section').waitFor()
-  await shot('feature-discovery')
   await page.goto(`${base}/#/read/${seeded[0]}`)
   await page.waitForFunction(() => {
     const doc = document.querySelector('foliate-view')?.renderer?.getContents?.()[0]?.doc

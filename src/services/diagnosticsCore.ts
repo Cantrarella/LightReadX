@@ -88,15 +88,6 @@ export interface DiagnosticsEnv {
   memory?: string
 }
 
-/** GitHub 新建 issue 链接: 预填环境, 日志文件由用户在页面上拖入 */
-export function feedbackUrl(env: DiagnosticsEnv, repo = 'https://github.com/yzfly/LightRead'): string {
-  const params = new URLSearchParams({
-    template: 'bug-report.yml',
-    version: `${env.version} · ${env.platform}${env.webview ? ` · WebView ${env.webview}` : ''}`,
-  })
-  return `${repo}/issues/new?${params}`
-}
-
 export function bundleName(version: string, now = new Date()): string {
   const stamp = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
   return `lightread-diagnostics-${version}-${stamp}.zip`

@@ -4,7 +4,6 @@ let readerReturnBooklist: string | null = null
 </script>
 <script setup lang="ts">
 import BookCover from '../components/BookCover.vue'
-import RecommendedBooklists from '../components/RecommendedBooklists.vue'
 import { askConfirm } from '../../services/confirm.ts'
 import AppSelect from '../../components/AppSelect.vue'
 import AppModal from '../../components/AppModal.vue'
@@ -1037,7 +1036,6 @@ async function batchClearTags() {
       </div>
       <p v-else class="booklist-overview-empty">{{ keyword.trim() ? t('reader.noResults') : t('v2.booklistsEmptyHint') }}</p>
       <button class="btn booklist-create" @click="openCreateBooklist"><span aria-hidden="true">＋</span>{{ t('library.newBooklist') }}</button>
-      <RecommendedBooklists v-if="settings.features.recommendedBooklists" :keyword="keyword" />
     </section>
 
     <div v-else-if="!kindBooks.length && !activeBooklist" class="empty">

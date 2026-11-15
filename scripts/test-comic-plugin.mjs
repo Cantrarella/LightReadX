@@ -139,22 +139,41 @@ module.exports.default = {
     await new Promise(function (r) { setTimeout(r, p.delay); });
     return p.value;
   },
+  // 大图全链路: 宿主 fetch -> 沙箱 arrayBuffer -> 原样回传宿主
+  bigPassThrough: async () => new Uint8Array(await (await fetch('https://example.com/big')).arrayBuffer()),
+  bigFetch: async () => {
+    var v = new Uint8Array(await (await fetch('https://example.com/big')).arrayBuffer());
+    return { len: v.length, first: v[0], mid: v[2621440], last: v[v.length - 1] };
+  },
+  legacyFetch: async () => (await fetch('https://example.com/legacy')).text(),
 };
 `
 
   const requests = []
   const saved = {}
   const toasts = []
+  const BIG_SIZE = 5 * 1024 * 1024
+  const bigExpected = new Uint8Array(BIG_SIZE)
+  for (let i = 0; i < bigExpected.length; i++) bigExpected[i] = (i * 7 + 13) & 255
   const request = async init => {
     requests.push(init)
-    const body = Buffer.from(
-      init.url.endsWith('/json') ? '{"ok":true}' : 'hello:' + init.url,
-      'utf8',
-    )
+    // 保留一条旧协议注入, 验证 bodyBase64 兼容路径没被改坏
+    if (init.url.endsWith('/legacy')) {
+      return {
+        status: 200, ok: true, url: init.url,
+        headers: { 'content-type': 'text/plain' },
+        bodyBase64: Buffer.from('legacy:' + init.url).toString('base64'),
+      }
+    }
+    const body = init.url.endsWith('/big') ? bigExpected
+      : Buffer.from(
+        init.url.endsWith('/json') ? '{"ok":true}' : 'hello:' + init.url,
+        'utf8',
+      )
     return {
       status: 200, ok: true, url: init.url,
       headers: { 'content-type': init.url.endsWith('/json') ? 'application/json' : 'text/plain' },
-      bodyBase64: body.toString('base64'),
+      body,
     }
   }
 
@@ -288,6 +307,36 @@ module.exports.default = {
   assert.equal(fast, 'fast', '快调用要拿到自己的结果')
   assert.equal(slowOne, 'slow', '慢调用要拿到自己的结果')
 
+  // ---- 二进制字节池: 5MB 大图全链路往返 (宿主 -> 沙箱 -> 宿主) ----
+  // executionBudgetMs 仍是 1s: 若还走老的 JS 循环 btoa/atob, 5MB 必然被
+  // 中断处理器掐断成"插件调用超时", 所以这条用例同时也是根治的证明。
+  const t0 = performance.now()
+  const roundTrip = await host.callBytes('bigPassThrough', {}, { timeoutMs: 15_000 })
+  assert.ok(roundTrip instanceof Uint8Array, 'callBytes 应返回 Uint8Array')
+  assert.equal(roundTrip.length, BIG_SIZE, '5MB 字节长度')
+  assert.ok(Buffer.from(roundTrip).equals(Buffer.from(bigExpected)), '5MB 必须逐字节一致')
+  console.log(`  5MB round trip (host -> vm -> host): ${(performance.now() - t0).toFixed(1)}ms`)
+
+  assert.deepEqual(
+    await host.call('bigFetch', {}, { timeoutMs: 15_000 }),
+    { len: BIG_SIZE, first: bigExpected[0], mid: bigExpected[BIG_SIZE >> 1], last: bigExpected[BIG_SIZE - 1] },
+    '宿主字节池 -> 沙箱 arrayBuffer 大字节',
+  )
+  assert.equal(
+    await host.call('legacyFetch', {}, { timeoutMs: 15_000 }),
+    'legacy:https://example.com/legacy',
+    '旧 bodyBase64 注入实现仍要兼容',
+  )
+
+  // 并发 callBytes 各拿各的字节, 字节池 id 不能串
+  const [smallC, bigC] = await Promise.all([
+    host.callBytes('bytes', {}, { timeoutMs: 15_000 }),
+    host.callBytes('bigPassThrough', {}, { timeoutMs: 15_000 }),
+  ])
+  assert.deepEqual([...smallC], [255, 216, 255, 224, 0, 1], '并发 callBytes 小结果不能串')
+  assert.equal(bigC.length, BIG_SIZE, '并发 callBytes 大结果不能串')
+  assert.ok(Buffer.from(bigC).equals(Buffer.from(bigExpected)), '并发下大字节仍完整')
+
   for (const [name, call] of [
     ['module initialization', () => createComicPluginHost({ code: 'for (;;) {}', request: async () => { throw new Error('unexpected request') } })],
     ['synchronous plugin code', () => host.call('spin', {}, { timeoutMs: 25 })],
@@ -301,7 +350,15 @@ module.exports.default = {
   host.dispose()
   await assert.rejects(() => host.call('getInfo', {}), /已释放/)
 
-  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / bytes / error / timeout / BreezeHtml / process / Headers / Request / Response / FormData / AbortSignal.any / URL base / 并发隔离 / dispose)')
+  // 连续创建/释放宿主: 即使 QuickJS-WASM 在释放期打印 gc_obj_list 断言,
+  // 后续宿主也必须能正常工作 (下载一章会反复开关宿主, 不能越跑越坏)
+  for (let i = 0; i < 3; i++) {
+    const fresh = await createComicPluginHost({ code: MINI_PLUGIN, request })
+    assert.deepEqual([...await fresh.callBytes('bytes')], [255, 216, 255, 224, 0, 1], `第 ${i + 1} 个宿主`)
+    fresh.dispose()
+  }
+
+  console.log('test-comic-plugin: OK (fnPath / bridge / crypto全套 / cache / timer / callSync / unauthorized / fetch / 字节池5MB往返 / 旧base64兼容 / 并发字节隔离 / error / timeout / BreezeHtml / process / Headers / Request / Response / FormData / AbortSignal.any / URL base / 并发隔离 / dispose)')
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

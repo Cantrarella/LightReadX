@@ -5,6 +5,7 @@
  *  - 网络请求: 由调用方注入 request (上层用 fetchRemote, 桌面端走 Tauri 原生 HTTP, 无跨域限制)
  *  - bridge: load_plugin_config / save_plugin_config / runtime.is_task_group_cancelled
  *  - crypto: 同步 HMAC / Hash (WEBTOON 等源用 HMAC-SHA1 签请求)
+ *  - 二进制字节池: __hostTakeBytes / __hostPutBytes, 图片与响应体只过句柄, 不走 base64
  *  - URL / URLSearchParams / TextEncoder / TextDecoder / atob / btoa / AbortSignal / console
  *
  * 本模块刻意不依赖 Vue / Pinia / Tauri, 便于在 Node 里用真实插件做回归测试
@@ -33,13 +34,6 @@ function getEngine(): Promise<QuickJSWASMModule> {
   return enginePromise
 }
 
-function base64ToBytes(b64: string): Uint8Array {
-  const s = atob(b64)
-  const out = new Uint8Array(s.length)
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i)
-  return out
-}
-
 // 哈希 / HMAC / AES 统一由 runtime.ts 实现, 这里只负责跨 QuickJS 边界的字节编解码
 
 export interface CallOptions {
@@ -47,7 +41,7 @@ export interface CallOptions {
   timeoutMs?: number
   /** 沙箱里对返回值求值的表达式, 结果必须是字符串 */
   mapResult?: string
-  /** 结果为 base64 二进制, 宿主解码成 Uint8Array */
+  /** 结果为宿主字节池 id, 宿主直接取回 Uint8Array (不在沙箱里编解码) */
   binary?: boolean
 }
 
@@ -162,6 +156,24 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
   const nativePool = new Map<number, unknown>()
   let nativeSeq = 0
 
+  /**
+   * 二进制字节池: 图片 / 响应体只在这条通道上过一次句柄, 不进 JSON 字符串,
+   * 也不在 WASM 里做 btoa/atob。id 取走即删, 避免整章下载把内存撑爆。
+   * ctx.getArrayBuffer 拿到的是指向 WASM 堆的视图, 所以存入前必须复制成宿主侧独立字节。
+   */
+  const bytePool = new Map<number, Uint8Array>()
+  let byteSeq = 0
+  const putBytes = (bytes: Uint8Array): number => {
+    const id = ++byteSeq
+    bytePool.set(id, new Uint8Array(bytes))
+    return id
+  }
+  const takeBytes = (id: number): Uint8Array | undefined => {
+    const bytes = bytePool.get(id)
+    bytePool.delete(id)
+    return bytes
+  }
+
   const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     async load_plugin_config(key: string, def?: unknown) { return readConfig(key, def) },
     async save_plugin_config(key: string, value: unknown) {
@@ -233,10 +245,26 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     handlers[name] = async (...args: unknown[]) => runCryptoBridge(name, args)
   }
 
+  /** 把宿主侧的二进制响应体换成一个字节池 id, 大字符串不再进 evalCode */
+  const packResult = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const body = (value as Record<string, unknown>).body
+    const bytes = body instanceof Uint8Array ? body
+      : body instanceof ArrayBuffer ? new Uint8Array(body)
+        : ArrayBuffer.isView(body)
+          ? new Uint8Array((body as ArrayBufferView).buffer, (body as ArrayBufferView).byteOffset, (body as ArrayBufferView).byteLength)
+          : null
+    if (!bytes) return value
+    const out: Record<string, unknown> = { ...(value as Record<string, unknown>), bodyId: putBytes(bytes) }
+    delete out.body
+    delete out.bodyBase64
+    return out
+  }
+
   const finish = (id: number, ok: boolean, value: unknown) => {
     if (disposed) return
     try {
-      const payload = JSON.stringify({ id, ok, value: ok ? value : null, error: ok ? null : value })
+      const payload = JSON.stringify({ id, ok, value: ok ? packResult(value) : null, error: ok ? null : value })
       evaluate(`globalThis.__qjsFinish(${payload})`, 'finish')
     } catch (err) {
       options.log?.('[comic-plugin] 异步回调失败', err)
@@ -294,6 +322,20 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     } catch (err) {
       return ctx.newString(JSON.stringify({ ok: false, error: String(err) }))
     }
+  })
+  /** 宿主 → 沙箱: 用 id 换 ArrayBuffer 句柄 (消费即删) */
+  expose('__hostTakeBytes', (idH: any) => {
+    const bytes = takeBytes(ctx.getNumber(idH))
+    return ctx.newArrayBuffer(bytes ? bytes.buffer : new ArrayBuffer(0))
+  })
+  /** 沙箱 → 宿主: 收 ArrayBuffer 句柄, 复制成宿主字节后返回 id */
+  expose('__hostPutBytes', (bufH: any) => {
+    let bytes = new Uint8Array(0)
+    try {
+      const life = ctx.getArrayBuffer(bufH)
+      try { bytes = new Uint8Array(life.value) } finally { life.dispose() }
+    } catch { /* 非 ArrayBuffer 时按空字节处理, 不打断插件 */ }
+    return ctx.newNumber(putBytes(bytes))
   })
   expose('__hostStart', (nameH: any, argsH: any) => {
     const name = ctx.getString(nameH)
@@ -390,9 +432,17 @@ globalThis.__calls = globalThis.__calls || {};
       if (!done) throw new Error(`插件调用超时 (${fnPath}, ${timeoutMs}ms)`)
       const out = evalStr(`${slot}.result`, 'result')
       if (out == null || out === 'null') return null as T
-      return (opts.binary ? base64ToBytes(out) : JSON.parse(out)) as T
+      if (opts.binary) return (takeBytes(Number(out)) ?? new Uint8Array(0)) as T
+      return JSON.parse(out) as T
     } finally {
       if (!disposed) {
+        // 失败路径上 __hostPutBytes 可能已经把字节放进池子, 按 slot 里的 id 清掉, 别留内存
+        if (opts.binary) {
+          try {
+            const idText = evalStr(`${slot}.result`, 'cleanup-bytes')
+            if (idText && idText !== 'null') bytePool.delete(Number(idText))
+          } catch { /* 忽略 */ }
+        }
         try { evaluate(`delete globalThis.__calls?.[${callId}]`, 'cleanup') } catch { /* 忽略 */ }
       }
     }
@@ -402,7 +452,7 @@ globalThis.__calls = globalThis.__calls || {};
     call,
     callBytes: (fnPath, payload, opts) => call<Uint8Array>(fnPath, payload, {
       ...opts,
-      mapResult: 'globalThis.__bytesToBase64(r)',
+      mapResult: 'String(globalThis.__hostPutBytes(globalThis.__toArrayBuffer(r)))',
       binary: true,
     }),
     hasFn: fnPath => evalStr(`String(typeof ${fnAccess(fnPath)} === 'function')`, 'hasFn') === 'true',
@@ -411,6 +461,8 @@ globalThis.__calls = globalThis.__calls || {};
       if (disposed) return
       disposed = true
       pending.clear()
+      bytePool.clear()
+      nativePool.clear()
       // QuickJS-WASM 在句柄没清干净时 dispose 会 abort
       // (Assertion failed: list_empty(&rt->gc_obj_list)), 这只是收尾告警,
       // 不能让它把已经成功的整章下载判成失败

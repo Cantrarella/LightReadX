@@ -24,14 +24,6 @@ export { normalizeSearch, normalizeDetail, normalizeChapter, coverUrl, pageFileN
 export type { ComicPluginHost } from './host'
 export type * from './types'
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  }
-  return btoa(s)
-}
-
 /** 默认请求实现: 插件的所有 fetch 都从这里出 */
 export async function defaultPluginRequest(init: PluginRequestInit): Promise<PluginResponse> {
   // 插件给的 header 优先 (防盗链 / Cookie / UA), 统一小写以免和 fetchRemote 默认头撞车
@@ -55,7 +47,8 @@ export async function defaultPluginRequest(init: PluginRequestInit): Promise<Plu
     ok: res.ok,
     url: res.url || init.url,
     headers: outHeaders,
-    bodyBase64: bytesToBase64(bytes),
+    // 字节直接交给宿主字节池, 不再在宿主侧 btoa / 沙箱侧 atob 来回编解码
+    body: bytes,
   }
 }
 

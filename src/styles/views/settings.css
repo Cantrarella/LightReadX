@@ -40,10 +40,6 @@
   width: 200px;
   flex-shrink: 0;
 }
-.about-formats summary { min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-2); }
-.about-formats summary::before { content: '＋'; }
-.about-formats[open] summary::before { content: '−'; }
-.about-formats p { margin: 0 0 12px; }
 
 .settings-confirm-body { padding: 20px; line-height: 1.7; color: var(--text-2); }
 .settings-confirm-body p + p { margin-top: 12px; }
@@ -1161,66 +1157,13 @@ h2:focus {
   margin-top: 10px;
   line-height: 1.7;
 }
-.star-callout {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  margin: 4px 0 16px;
-  border: 1px solid var(--brand-light);
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--brand-light), var(--card) 72%);
-}
-.star-mark {
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--card);
-  color: var(--warning);
-  box-shadow: var(--shadow);
-}
-.star-copy {
-  flex: 1;
-  min-width: 0;
-}
-.star-title {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-}
-.star-desc {
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.6;
-  margin-top: 2px;
-}
-.star-action {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.about {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-.about p {
-  font-size: 13px;
-  line-height: 1.9;
-  color: var(--text-2);
-  margin-bottom: 8px;
-}
-.about-links {
-  display: flex;
-  gap: 16px;
-}
-.about-links a {
-  color: var(--brand);
-}
 .muted {
   color: var(--text-3);
   font-size: 12px;
+}
+/* 署名与许可声明: 放在「关于」标题下, 保留原作者与 AGPL 信息 */
+.about-credit {
+  margin: 0 0 16px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1395,19 +1338,6 @@ h2:focus {
   .about-actions .btn {
     flex: 1;
     height: 40px;
-  }
-  .star-callout {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-  .star-action {
-    width: 100%;
-    height: 40px;
-  }
-  .about-links a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 36px;
   }
 }
 /* ================= 手机: 分组列表 + 二级页 ================= */

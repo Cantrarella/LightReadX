@@ -1,15 +1,12 @@
-// 书单: 待找条目的匹配 / 自动关联、分享格式往返、推荐书单数据校验 (纯函数, 见 docs/booklists.md)
+// 书单: 待找条目的匹配 / 自动关联、分享格式往返 (纯函数, 见 docs/booklists.md)
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import {
   authorsCompatible, buildShare, cleanEntry, doubanSearchUrl, entryKey, entryMatchesBook, findMatchingBook, findQuery,
-  normalizeIsbn, parseCuratedIndex, parseShareMarkdown, parseShareText, planAutoLink, planListImport, sameEntry,
-  shareFileName, shareToJson, shareToMarkdown, titleKey, titlesMatch, validateCuratedList, yearLabel,
+  normalizeIsbn, parseShareMarkdown, parseShareText, planAutoLink, planListImport, sameEntry,
+  shareFileName, shareToJson, shareToMarkdown, titleKey, titlesMatch, yearLabel,
 } from '../src/services/booklists.ts'
 
-const DATA_DIR = new URL('../src/data/booklists/', import.meta.url).pathname
 const book = (id, title, author, extra = {}) => ({ id, title, author, kind: 'book', addedAt: 1, ...extra })
 const matches = (entry, b) => entryMatchesBook(entry, book('x', b.title, b.author))
 
@@ -191,61 +188,4 @@ test('share helpers: file name, douban link, find query, year label', () => {
   assert.equal(yearLabel(-375, 'en'), '375 BC')
   assert.equal(yearLabel(1859), '1859')
   assert.equal(yearLabel(undefined), '')
-})
-
-// ---- 推荐书单 ----
-
-const validList = () => ({
-  id: 'demo-list', title: '示例', description: 'd', curator: '轻阅编辑部', tags: ['a'], updated: '2026-10-06',
-  source: { name: '轻阅编辑部', url: 'https://github.com/yzfly/LightRead', license: 'CC0-1.0' },
-  books: [{ title: 'Walden', author: 'Henry David Thoreau', year: 1854 }],
-})
-
-test('validateCuratedList: required fields, bad entries dropped, duplicates removed', () => {
-  assert.equal(validateCuratedList(validList()).id, 'demo-list')
-  for (const broken of [
-    { ...validList(), id: 'Bad Id' },
-    { ...validList(), updated: '2026/10/06' },
-    { ...validList(), source: { name: 'x', url: 'ftp://x', license: 'y' } },
-    { ...validList(), source: undefined },
-    { ...validList(), curator: '' },
-    { ...validList(), books: [] },
-    { ...validList(), books: [{ title: 'No author' }] },
-  ]) assert.equal(validateCuratedList(broken), null, JSON.stringify(broken).slice(0, 80))
-  const list = validateCuratedList({
-    ...validList(),
-    books: [
-      { title: 'Walden', author: 'Henry David Thoreau', wikidata: 'Q12345', original: { title: 'x', author: 'y' } },
-      { title: 'Walden', author: 'Thoreau' },
-      { title: '', author: 'x' },
-      { title: 'Moby-Dick', author: 'Herman Melville', wikidata: 'not-q' },
-    ],
-  })
-  assert.deepEqual(list.books.map(b => [b.title, b.wikidata]), [['Walden', 'Q12345'], ['Moby-Dick', undefined]])
-})
-
-test('bundled curated lists: index matches files, every list validates without losing entries', () => {
-  const files = readdirSync(DATA_DIR).filter(f => f.endsWith('.json') && f !== 'index.json').sort()
-  const index = parseCuratedIndex(JSON.parse(readFileSync(join(DATA_DIR, 'index.json'), 'utf8')))
-  assert.ok(index, 'index.json parses')
-  assert.match(index.updated, /^\d{4}-\d{2}-\d{2}$/)
-  assert.deepEqual([...index.lists].sort(), files.map(f => f.replace(/\.json$/, '')), 'index lists exactly the list files')
-  assert.ok(files.length >= 4, 'at least a handful of lists')
-  for (const file of files) {
-    const raw = JSON.parse(readFileSync(join(DATA_DIR, file), 'utf8'))
-    const list = validateCuratedList(raw)
-    assert.ok(list, `${file} validates`)
-    assert.equal(`${list.id}.json`, file, 'id matches file name')
-    assert.equal(list.books.length, raw.books.length, `${file}: no entry was dropped by validation`)
-    assert.ok(list.books.length >= 5, `${file}: has books`)
-    assert.ok(list.description.length > 0, `${file}: has a description`)
-    assert.ok(list.source.name && list.source.url && list.source.license, `${file}: source recorded`)
-    const keys = list.books.map(b => titleKey(b.title))
-    assert.equal(new Set(keys).size, keys.length, `${file}: no duplicate titles`)
-    for (const b of raw.books) {
-      if (b.year !== undefined) assert.ok(Number.isInteger(b.year), `${file}: ${b.title} year is an integer`)
-      if (b.isbn !== undefined) assert.ok(normalizeIsbn(b.isbn), `${file}: ${b.title} ISBN is valid`)
-      if (b.wikidata !== undefined) assert.match(b.wikidata, /^Q\d+$/)
-    }
-  }
 })

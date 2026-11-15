@@ -1,11 +1,8 @@
 /**
- * 关于页的「全平台下载」与「读者群」: 纯函数, 不依赖网络与平台 (取数见 aboutLinksLoad.ts)。
+ * 关于页的「本机安装包下载」: 纯函数, 不依赖网络与平台 (取数见 aboutLinksLoad.ts)。
  *
- * - 下载: 桌面与 App 分开发版 (桌面 vX.Y.Z, App app-vX.Y.Z; 旧的统一版 vX.Y.Z 也可能带 APK),
- *   各取最新一个带对应安装包的 Release。GitCode 镜像只认已上传 SHA256SUMS 的版本, 地址按固定模式拼接。
- * - 读者群: 微信群二维码 7 天过期, 不打包进应用, 由 lightread-assets 上的 community.json 指向
- *   带内容哈希的图片; 只接受该目录下的 https 图片, 过期即不显示。
- *   另给作者微信号 (加好友后拉群), 二维码过期或取不到时仍可入群; community.json 可覆盖。
+ * 桌面与 App 分开发版 (桌面 vX.Y.Z, App app-vX.Y.Z; 旧的统一版 vX.Y.Z 也可能带 APK),
+ * 各取最新一个带对应安装包的 Release。GitCode 镜像只认已上传 SHA256SUMS 的版本, 地址按固定模式拼接。
  */
 
 export type PlatformId = 'windows' | 'mac' | 'linux' | 'android'
@@ -122,39 +119,4 @@ export function detectPlatform(ua: string): PlatformId | null {
   if (/Win/i.test(ua)) return 'windows'
   if (/Linux|X11/i.test(ua)) return 'linux'
   return null
-}
-
-// ---- 读者群 ----
-
-export const COMMUNITY_BASE = 'https://lightread-assets.jiangshu.ai/community/v1/'
-export const COMMUNITY_URL = `${COMMUNITY_BASE}community.json`
-
-export interface WechatGroup {
-  name: string
-  image: string
-  /** ISO 时间, 到期后不再显示 */
-  expiresAt: string
-}
-
-/** 校验 community.json; 图片必须在 COMMUNITY_BASE 下, 已过期或格式不对返回 null */
-export function parseCommunity(data: unknown, now = Date.now()): WechatGroup | null {
-  const group = (data as any)?.wechatGroup
-  if (!group || typeof group !== 'object') return null
-  const image = String(group.image ?? '')
-  const name = String(group.name ?? '').trim()
-  const expiresAt = String(group.expiresAt ?? '')
-  const expires = Date.parse(expiresAt)
-  if (!image.startsWith(COMMUNITY_BASE) || !SAFE_NAME.test(image.slice(COMMUNITY_BASE.length))) return null
-  if (!name || !Number.isFinite(expires) || expires <= now) return null
-  return { name, image, expiresAt }
-}
-
-/** 作者 (云中江树) 的微信号, 加好友后拉进读者群 (2026-10-27 用户提供) */
-export const AUTHOR_WECHAT = '1796060717'
-const WECHAT_ID = /^[A-Za-z0-9_-]{5,30}$/
-
-/** community.json 里的 wechatContact.id; 缺失或格式不对时用内置的作者微信号 */
-export function parseWechatContact(data: unknown): string {
-  const id = String((data as any)?.wechatContact?.id ?? '').trim()
-  return WECHAT_ID.test(id) ? id : AUTHOR_WECHAT
 }

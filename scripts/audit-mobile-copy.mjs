@@ -5,7 +5,7 @@ const browser=await chromium.launch({headless:true})
 const results=[]
 for (const width of [320,360,392]) for (const language of ['zh','en']) {
 const page=await browser.newPage({viewport:{width,height:800},isMobile:true,hasTouch:true})
-await page.addInitScript(language=>localStorage.setItem('lightread-settings',JSON.stringify({version:16,language,features:{transfer:true,recommendedBooklists:true}})),language)
+await page.addInitScript(language=>localStorage.setItem('lightread-settings',JSON.stringify({version:16,language,features:{transfer:true}})),language)
 for(const route of ['library','papers','catalogs','settings','stats','transfer','manual']) {
  await page.goto('http://localhost:4173/#/'+route)
  await page.waitForTimeout(1200)

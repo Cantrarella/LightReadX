@@ -132,7 +132,7 @@ assert.equal(renderer, 'pdfium')
 assert.equal(await page.locator('.paper-state').count(), 0)
 console.log('ok  阅读器: MuPDF 崩溃回退 PDFium, 没有错误页')
 
-// 真打不开时: 报错页不露原始错误, 能导出日志, 能直达读者群
+// 真打不开时: 报错页不露原始错误, 能导出日志
 await page.evaluate(async () => {
   const { PdfiumDoc } = await import('/src/services/pdfium.ts')
   PdfiumDoc.load = () => { throw new WebAssembly.RuntimeError('memory access out of bounds') }
@@ -143,19 +143,7 @@ await page.waitForSelector('.paper-state p', { timeout: 30000 })
 assert.match(await page.locator('.paper-state p').innerText(), /PDF 引擎崩溃/)
 assert.ok(!(await page.locator('.paper-state').innerText()).includes('out of bounds'))
 assert.equal(await page.getByRole('button', { name: '导出诊断日志' }).count(), 1)
-await page.getByRole('button', { name: '加读者群反馈' }).click()
-await page.waitForSelector('#about-community-title', { timeout: 15000 })
-// 反馈入口与群二维码 / 作者微信在同一模块, 并已定位到视口内
-const community = page.locator('section[aria-labelledby="about-community-title"]')
-await community.getByRole('button', { name: '复制微信号' }).waitFor({ timeout: 20000 })
-assert.equal(await community.getByRole('button', { name: '导出诊断日志' }).count(), 1)
-assert.equal(await community.getByText('也可以到 GitHub 反馈').count(), 1)
-await page.waitForTimeout(300)
-assert.ok(await page.locator('#about-community-title').evaluate(el => {
-  const r = el.getBoundingClientRect()
-  return r.top >= 0 && r.top < innerHeight
-}), '读者群标题不在视口内')
-console.log('ok  报错页: 友好文案 + 导出 + 直达读者群')
+console.log('ok  报错页: 友好文案 + 导出')
 assert.ok(!pageErrors.some(e => /out of bounds|Aborted/.test(e)), pageErrors.join('\n'))
 await browser.close()
 console.log('e2e-pdf-crash passed')

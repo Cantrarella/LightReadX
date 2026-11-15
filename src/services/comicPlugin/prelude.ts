@@ -4,6 +4,7 @@
  * 插件是 CommonJS bundle, 运行在 QuickJS 里 —— 没有 DOM / URL / fetch / crypto / Buffer。
  * 这里补齐 Web 基础 API, 并把需要宿主能力的操作桥接到 __host* 函数上:
  *   __hostLog / __hostUrlParse / __hostHmac / __hostHash / __hostStart
+ *   __hostTakeBytes / __hostPutBytes (二进制双向通道, 不经过 base64)
  * host.ts 负责实现这些函数, 网络请求统一由宿主发出 (桌面端走 Tauri 原生 HTTP, 无跨域限制)。
  *
  * 注意: 本文件由 plugin-lab 里验证通过的原型移植而来, 改动后请跑 scripts/test-comic-plugin.mjs。
@@ -385,7 +386,7 @@ if (typeof globalThis.performance === 'undefined') {
   globalThis.performance = { now: function () { return Date.now(); }, timeOrigin: Date.now() };
 }
 
-// ---- fetch（宿主执行，二进制 base64 回传）----
+// ---- fetch（宿主执行，二进制经字节池回传）----
 // 支持 fetch(url, init) 与 fetch(new Request(...)) 两种调用; 返回真 Response 实例,
 // 因为 ky 用 response instanceof Response / body 流判断是否可用。
 globalThis.fetch = async function (input, init) {
@@ -419,7 +420,10 @@ globalThis.fetch = async function (input, init) {
   }
   var signalMs = (opts.signal && opts.signal._timeoutMs) || (req && req.signal && req.signal._timeoutMs) || 0;
   var r = await __hostAsync('fetch', [{ url: url, method: method || 'GET', headers: hdr, body: payload, timeoutMs: signalMs }]);
-  var bin = Uint8Array.from(atob(r.bodyBase64), function (c) { return c.charCodeAt(0); });
+  // 主通道: 宿主把字节放进池子, 这里只拿一个 ArrayBuffer 句柄, 不做 atob / 逐字符解码。
+  // bodyBase64 仅用于兼容仍按旧协议注入的 request 实现。
+  var bin = (r.bodyId != null) ? new Uint8Array(__hostTakeBytes(r.bodyId))
+          : Uint8Array.from(atob(r.bodyBase64 || ''), function (c) { return c.charCodeAt(0); });
   return new globalThis.Response(bin, {
     status: r.status, statusText: r.statusText, url: r.url, headers: r.headers,
   });
@@ -432,6 +436,20 @@ globalThis.__bytesToBase64 = function (b) {
   var s = '';
   for (var i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
   return btoa(s);
+};
+// 二进制出沙箱: __hostPutBytes 只接受 ArrayBuffer 句柄 (QuickJS 的 getArrayBuffer
+// 对 TypedArray 会报 "Couldn't allocate memory"), 所以先在这里归一化。
+// .slice 是引擎原生的 memcpy, 不是 JS 逐字节循环, 大图也只有几毫秒。
+globalThis.__toArrayBuffer = function (x) {
+  if (x == null) return new ArrayBuffer(0);
+  if (x instanceof ArrayBuffer) return x;
+  if (x && x.buffer && x.BYTES_PER_ELEMENT === 1) {
+    var off = x.byteOffset || 0;
+    return x.buffer.slice(off, off + x.byteLength);
+  }
+  if (Array.isArray(x)) return new Uint8Array(x).buffer;
+  if (typeof x === 'string') return new TextEncoder().encode(x).buffer;
+  return new ArrayBuffer(0);
 };
 // URLSearchParams 的写操作已经在类里实现 (会回写 url), 这里只补一个迭代器,
 // 不要再往原型上盖 append/delete —— 盖掉就丢了回写, 插件拼的参数会静默消失

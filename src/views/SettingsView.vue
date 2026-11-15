@@ -28,7 +28,7 @@ import { cacheClear, cacheStats } from '../services/comicPlugin/imageCache'
 import { clearFinished, downloadState, initDownloads } from '../services/comicPlugin/downloadCenter'
 import { errorText, redactUrls } from '../services/errorText'
 import {
-  CURRENT_VERSION, RELEASES_URL, REPO_URL, ISSUES_URL,
+  CURRENT_VERSION,
   checkUpdate, pickDownloads, openDownload, canInAppInstall,
   downloadInstaller, installWithPrompt, downloadErrorMessage, openInstallPermission, installPermissionGranted, copyLink,
   type UpdateInfo, type DownloadOption,
@@ -1002,14 +1002,6 @@ const APPEARANCE_OPTIONS = [
       <div class="pl-label">{{ t('settings.features') }}</div>
       <div class="pl-group">
         <label class="pl-row">
-          <span class="pl-ico tone-warning" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></span>
-          <span class="pl-text"><span class="pl-title">{{ t('settings.featureBooklists') }}</span><span class="pl-desc">{{ t('settings.featureBooklistsDesc') }}</span></span>
-          <span class="switch">
-            <input v-model="settings.features.recommendedBooklists" type="checkbox" role="switch" :aria-label="t('settings.featureBooklists')" :aria-checked="settings.features.recommendedBooklists" />
-            <span class="switch-track" aria-hidden="true"></span>
-          </span>
-        </label>
-        <label class="pl-row">
           <span class="pl-ico tone-brand" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l3 3-3 3M20 6H5M7 21l-3-3 3-3M4 18h15"/></svg></span>
           <span class="pl-text"><span class="pl-title">{{ t('settings.featureTransfer') }}</span><span class="pl-desc">{{ t('settings.featureTransferDesc') }}</span></span>
           <span class="switch">
@@ -1312,16 +1304,6 @@ const APPEARANCE_OPTIONS = [
     <section v-show="showSection('features')" id="settings-features" class="card section" aria-labelledby="settings-features-heading">
       <h2 id="settings-features-heading" tabindex="-1">{{ t('settings.features') }}</h2>
       <p class="section-desc">{{ t('settings.featuresDesc') }}</p>
-      <label class="toggle-row">
-        <span class="toggle-text">
-          <span class="row-title">{{ t('settings.featureBooklists') }}</span>
-          <span class="row-desc">{{ t('settings.featureBooklistsDesc') }}</span>
-        </span>
-        <span class="switch">
-          <input v-model="settings.features.recommendedBooklists" type="checkbox" role="switch" :aria-label="t('settings.featureBooklists')" :aria-checked="settings.features.recommendedBooklists" />
-          <span class="switch-track" aria-hidden="true"></span>
-        </span>
-      </label>
       <label class="toggle-row">
         <span class="toggle-text">
           <span class="row-title">{{ t('settings.featureTransfer') }}</span>
@@ -1650,6 +1632,9 @@ const APPEARANCE_OPTIONS = [
     <!-- 关于 -->
     <section v-show="showSection('about')" id="settings-about" class="card section" aria-labelledby="settings-about-heading">
       <h2 id="settings-about-heading" tabindex="-1">{{ t('settings.about') }}</h2>
+      <p class="muted about-credit">
+        {{ t('settings.author') }}: 云中江树 ({{ t('settings.wechat') }}: 云中江树) · {{ t('settings.license') }}: GNU AGPL v3.0+
+      </p>
 
       <div class="app-identity">
         <img class="app-icon" src="/icon-192.png" alt="LightRead" />
@@ -1730,34 +1715,6 @@ const APPEARANCE_OPTIONS = [
       </div>
 
       <AboutLinks v-if="showSection('about')" />
-
-      <div class="star-callout">
-        <div class="star-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2.5a1 1 0 0 1 .9.56l2.44 4.95 5.46.8a1 1 0 0 1 .56 1.7l-3.95 3.85.93 5.44a1 1 0 0 1-1.45 1.05L12 18.28l-4.89 2.57a1 1 0 0 1-1.45-1.05l.93-5.44-3.95-3.85a1 1 0 0 1 .56-1.7l5.46-.8 2.44-4.95A1 1 0 0 1 12 2.5z"/></svg>
-        </div>
-        <div class="star-copy">
-          <div class="star-title">{{ t('settings.starTitle') }}</div>
-          <div class="star-desc">{{ t('settings.starDesc') }}</div>
-        </div>
-        <button class="btn btn-primary star-action" @click="download(REPO_URL)">
-          {{ t('settings.starAction') }}
-        </button>
-      </div>
-
-      <div class="about">
-        <details class="about-formats">
-          <summary>{{ t('settings.aboutFormatsShort') }}</summary>
-          <p>{{ t('settings.aboutFormats') }}</p>
-        </details>
-        <p class="about-links">
-          <a href="javascript:void 0" @click="download(REPO_URL)">{{ t('settings.repoLink') }}</a>
-          <a href="javascript:void 0" @click="download(ISSUES_URL)">{{ t('settings.issuesLink') }}</a>
-          <a href="javascript:void 0" @click="download(RELEASES_URL)">{{ t('settings.releasesLink') }}</a>
-        </p>
-        <p class="muted">
-          {{ t('settings.author') }}: 云中江树 ({{ t('settings.wechat') }}: 云中江树) · {{ t('settings.license') }}: GNU AGPL v3.0+
-        </p>
-      </div>
     </section>
 
     <!-- 手机设置: 选择面板 -->

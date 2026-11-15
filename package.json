@@ -1,7 +1,7 @@
 {
   "name": "lightread",
   "private": true,
-  "version": "2.11.4",
+  "version": "2.11.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -54,7 +54,6 @@
     "e2e": "node scripts/e2e-smoke.mjs",
     "e2e:epub-compat": "node scripts/e2e-epub-compat.mjs",
     "e2e:book-sources": "node scripts/e2e-book-sources.mjs",
-    "e2e:booklists": "node scripts/e2e-booklists.mjs",
     "e2e:continuous-scroll": "node scripts/e2e-continuous-scroll.mjs",
     "test:epub-compat": "node --experimental-strip-types --test scripts/test-epub-compat.mjs",
     "test:compat": "node --experimental-strip-types --test scripts/test-compat.mjs scripts/test-epub-compat.mjs scripts/test-system-language.mjs",
@@ -98,7 +97,6 @@
     "test:concept-recognition": "node --experimental-strip-types --test scripts/test-concept-recognition.mjs",
     "test:auto-scroll": "node --experimental-strip-types --test scripts/test-auto-scroll.mjs",
     "e2e:concept-recognition": "node scripts/e2e-concept-recognition.mjs",
-    "e2e:mobile-booklists": "node scripts/e2e-mobile-booklists.mjs",
     "test:mobile-messages": "node --test scripts/test-mobile-messages.mjs",
     "e2e:mobile-messages": "node scripts/e2e-mobile-messages.mjs",
     "test:zh-segment-wasm": "node --experimental-strip-types --test scripts/test-zh-segment-wasm.mjs",

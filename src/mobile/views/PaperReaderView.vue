@@ -37,7 +37,7 @@ import { PdfRenderClient, paintRenderedPage } from '../../services/pdfRender/cli
 import { rasterPage } from '../../services/pdfRender/raster'
 import { PAGE_BITMAP_BUDGET, pageWindow } from '../../services/pdfRender/budget'
 import { isWasmCrash } from '../../services/wasmCrash'
-import { exportDiagnostics, logEvent, requestCommunityFocus } from '../../services/diagnostics'
+import { exportDiagnostics, logEvent } from '../../services/diagnostics'
 import { importFile } from '../../services/importer'
 import { detectFormat } from '../../services/format'
 import { FONT_FAMILIES, HIGHLIGHT_COLORS, READER_THEME_CHOICES, resolveReaderColors } from '../../services/readerTheme'
@@ -137,11 +137,6 @@ const sourcePdfVersion = ref('')
 let mupdfDocPromise: Promise<any> | null = null
 let mupdfRenderFailed = false
 const pdfEngineCrashed = ref(false)
-
-function goToCommunity() {
-  requestCommunityFocus()
-  void router.push({ path: '/settings', query: { section: 'about' } })
-}
 
 async function exportDiagnosticsFromError() {
   try {
@@ -4430,7 +4425,6 @@ onBeforeUnmount(() => clearTimeout(phoneBarsTimer))
     <div v-else-if="error" class="paper-state">
       <p>{{ error }}</p>
       <button v-if="pdfEngineCrashed" class="btn" @click="exportDiagnosticsFromError">{{ t('settings.diagnosticsExport') }}</button>
-      <button v-if="pdfEngineCrashed" class="btn" @click="goToCommunity">{{ t('reader.pdfCrashJoinGroup') }}</button>
       <button class="btn" @click="router.push(backTarget)">{{ backLabel }}</button>
     </div>
 

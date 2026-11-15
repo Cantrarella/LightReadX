@@ -1,17 +1,14 @@
 <script setup lang="ts">
 /**
- * 关于页: 各系统安装包 + 微信读者群。桌面与 App 共用 (openDownload / toast 在 App 构建里解析到各自实现)。
- * 数据与规则见 services/aboutLinks.ts。
+ * 关于页: 本机系统安装包。桌面与 App 共用 (openDownload 在 App 构建里解析到各自实现)。
+ * 数据与规则见 services/aboutLinks.ts, 取数见 aboutLinksLoad.ts。
  */
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { t } from '../../i18n'
-import { isTauri } from '../../storage/types'
-import { copyLink, openDownload } from '../../services/updater'
+import { openDownload } from '../../services/updater'
 import { toast } from '../../services/toast'
-import { AUTHOR_WECHAT, detectPlatform, type PackageKind, type PlatformDownload, type PlatformId, type WechatGroup } from '../../services/aboutLinks'
-import { loadCommunity, loadPlatformDownloads } from '../../services/aboutLinksLoad'
-import { consumeCommunityFocus } from '../../services/diagnostics'
-import DiagnosticsPanel from './DiagnosticsPanel.vue'
+import { detectPlatform, type PackageKind, type PlatformDownload, type PlatformId } from '../../services/aboutLinks'
+import { loadPlatformDownloads } from '../../services/aboutLinksLoad'
 
 const PLATFORM_LABEL: Record<PlatformId, string> = {
   windows: 'Windows',
@@ -30,33 +27,14 @@ const PKG_KEY: Record<PackageKind, string> = {
 }
 
 const thisPlatform = detectPlatform(navigator.userAgent)
-/** 手机上无法用本机扫本机的码, 提示截图后从相册识别 */
-const onPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
 const downloads = ref<PlatformDownload[]>([])
 const downloadsState = ref<'loading' | 'ready' | 'failed'>('loading')
-const group = ref<WechatGroup | null>(null)
-const wechatId = ref(AUTHOR_WECHAT)
-const groupState = ref<'loading' | 'ready'>('loading')
-const qrBroken = ref(false)
 
 /** 只显示本机平台 (桌面版=Windows / App 版=Android), 其余系统安装包不再展示 */
 const rows = computed(() => downloads.value.filter(d => d.platform === thisPlatform))
 
-const expiresText = computed(() => {
-  if (!group.value) return ''
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' })
-    .formatToParts(new Date(group.value.expiresAt))
-  const pick = (type: string) => parts.find(p => p.type === type)?.value ?? ''
-  return t('settings.communityExpires', { month: pick('month'), day: pick('day') })
-})
-
 const fmtSize = (bytes: number) => (bytes > 0 ? ` · ${Math.max(1, Math.round(bytes / 1048576))} MB` : '')
-
-async function copyWechatId() {
-  if (await copyLink(wechatId.value)) toast(t('settings.communityIdCopied'), 'success')
-  else toast(t('settings.communityCopyFailed', { id: wechatId.value }), 'error')
-}
 
 async function open(url: string) {
   try {
@@ -67,19 +45,6 @@ async function open(url: string) {
 }
 
 onMounted(async () => {
-  void loadCommunity()
-    .then(info => {
-      group.value = info.group
-      wechatId.value = info.wechatId
-    })
-    .catch(() => { group.value = null })
-    .finally(() => {
-      groupState.value = 'ready'
-      // 从报错页跳来: 二维码出现后再定位, 否则内容撑开后位置会变
-      if (consumeCommunityFocus()) {
-        void nextTick(() => document.getElementById('about-community-title')?.scrollIntoView({ block: 'start' }))
-      }
-    })
   try {
     downloads.value = (await loadPlatformDownloads()).items
     downloadsState.value = 'ready'
@@ -119,38 +84,6 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="block" aria-labelledby="about-community-title">
-      <h3 id="about-community-title" class="block-title">{{ t('settings.communityTitle') }}</h3>
-      <div class="community">
-        <!-- 过期 / 取不到时不留空框, 只剩文字与「复制微信号」 -->
-        <div v-if="groupState === 'loading' || (group && !qrBroken)" class="qr">
-          <span v-if="groupState === 'loading'" class="skeleton sk-qr" aria-hidden="true" />
-          <img
-            v-else-if="group"
-            :src="group.image"
-            :alt="t('settings.communityQrAlt', { name: group.name })"
-            width="160"
-            height="160"
-            @error="qrBroken = true"
-          />
-        </div>
-        <div class="community-copy">
-          <template v-if="group && !qrBroken">
-            <div class="group-name">{{ group.name }}</div>
-            <p>{{ t('settings.communityDesc') }}</p>
-            <p v-if="onPhone && isTauri()" class="hint">{{ t('settings.communityPhoneHint') }}</p>
-            <p class="hint">{{ expiresText }}</p>
-          </template>
-          <p v-else-if="groupState === 'ready'">{{ t('settings.communityFallback', { id: wechatId }) }}</p>
-          <!-- 加作者微信拉群: 二维码有效时作为另一种方式, 过期时是唯一入口 -->
-          <p v-if="groupState === 'ready'" class="wechat-line">
-            <span v-if="group && !qrBroken">{{ t('settings.communityWechat', { id: wechatId }) }}</span>
-            <button type="button" class="btn btn-sm copy-id" @click="copyWechatId">{{ t('settings.communityCopyId') }}</button>
-          </p>
-        </div>
-      </div>
-      <DiagnosticsPanel />
-    </section>
   </div>
 </template>
 
@@ -227,58 +160,6 @@ onMounted(async () => {
   color: var(--text-3);
   font-size: var(--fs-sm, 13px);
 }
-.community {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.qr {
-  flex-shrink: 0;
-  width: 160px;
-  height: 160px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: #fff; /* 二维码需要白底才能被识别, 深色模式也保持 */
-  overflow: hidden;
-}
-.qr img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.community-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.community-copy p {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--fs-sm, 13px);
-}
-.community-copy .wechat-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-2);
-}
-.copy-id {
-  flex-shrink: 0;
-}
-.group-name {
-  font-weight: 600;
-}
-.community-copy .hint {
-  color: var(--text-3);
-  font-size: var(--fs-xs, 12px);
-}
 .skeleton {
   display: block;
   border-radius: var(--radius-sm);
@@ -291,10 +172,6 @@ onMounted(async () => {
 .sk-btn {
   width: 96px;
   height: 28px;
-}
-.sk-qr {
-  width: 100%;
-  height: 100%;
 }
 @media (max-width: 720px) {
   .row {
@@ -311,10 +188,6 @@ onMounted(async () => {
   }
   .size {
     display: none;
-  }
-  .community {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 </style>

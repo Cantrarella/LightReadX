@@ -1,7 +1,7 @@
 // 诊断日志纯函数与 wasm 崩溃判定。运行: npm run test:diagnostics
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { RingBuffer, bundleName, feedbackUrl, formatLine, makeLine, redact } from '../src/services/diagnosticsCore.ts'
+import { RingBuffer, bundleName, formatLine, makeLine, redact } from '../src/services/diagnosticsCore.ts'
 import { isWasmCrash } from '../src/services/wasmCrash.ts'
 
 test('redact removes secrets, identity and book file names', () => {
@@ -47,12 +47,7 @@ test('ring buffer keeps the newest entries', () => {
   assert.deepEqual(ring.toArray(), [2, 3])
 })
 
-test('feedback link carries version only and bundle name is stable', () => {
-  const url = new URL(feedbackUrl({ version: '2.7.1', platform: 'Windows App', userAgent: 'secret-ua', webview: '156' }))
-  assert.equal(url.pathname, '/yzfly/LightRead/issues/new')
-  assert.equal(url.searchParams.get('template'), 'bug-report.yml')
-  assert.equal(url.searchParams.get('version'), '2.7.1 · Windows App · WebView 156')
-  assert.ok(!url.href.includes('secret-ua'))
+test('bundle name is stable', () => {
   assert.equal(bundleName('2.7.1', new Date('2026-11-06T01:02:03Z')), 'lightread-diagnostics-2.7.1-20261106-010203.zip')
 })
 

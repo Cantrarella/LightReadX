@@ -5,7 +5,7 @@
 import { strToU8, zipSync } from 'fflate'
 import { isTauri } from '../storage/types'
 import {
-  RingBuffer, bundleName, feedbackUrl, formatLine, makeLine, redact,
+  RingBuffer, bundleName, formatLine, makeLine, redact,
   type DiagnosticsEnv, type LogLevel, type LogLine,
 } from './diagnosticsCore'
 
@@ -145,22 +145,4 @@ export async function exportDiagnostics(): Promise<boolean> {
   const { isAndroidApp, saveFileAs, shareFile } = await import('./shareOut')
   if (isAndroidApp()) return shareFile(blob, fileName, 'application/zip', fileName)
   return saveFileAs(blob, fileName, { name: 'ZIP', extensions: ['zip'] })
-}
-
-let communityFocus = false
-
-/** 报错页 → 设置页: 请求关于页打开后定位到读者群 */
-export function requestCommunityFocus() {
-  communityFocus = true
-}
-
-export function consumeCommunityFocus(): boolean {
-  const pending = communityFocus
-  communityFocus = false
-  return pending
-}
-
-export async function openFeedback() {
-  const { openDownload } = await import('./updater')
-  await openDownload(feedbackUrl(await diagnosticsEnv()))
 }

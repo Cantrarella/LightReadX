@@ -187,9 +187,8 @@ export const SETTINGS_SYNC_SPEC: SettingsSpec = {
     duckLevel: SYNC,
     pauseWhenHidden: SYNC,
   },
-  /** 可选功能开关 (书单推荐 / 互传) 是使用偏好, 随同步带到其他设备 */
+  /** 可选功能开关 (互传) 是使用偏好, 随同步带到其他设备 */
   features: {
-    recommendedBooklists: SYNC,
     transfer: SYNC,
   },
   /** 漫画下载并发/休息偏好: 各设备网络与性能不同, 只属于本机 */

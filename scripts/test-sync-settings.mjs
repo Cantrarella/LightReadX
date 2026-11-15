@@ -43,7 +43,7 @@ test('每个默认设置都已归类 (sync / secret / local), 归类表没有多
   ]) assert.ok(LOCAL_SETTING_PATHS.includes(p), `${p} 应只属于本机`)
   for (const p of ['reader.theme', 'reader.fontSize', 'language', 'webdavUrl', 'webdavUser',
     'webdavProvider', 'aiProvider', 'aiBaseUrl', 'aiModel', 'readingMode.typewriter.cpm', 'ambient.layers',
-    'features.recommendedBooklists', 'features.transfer', 'dianjing.level', 'readingMode.wordGuide.enabled',
+    'features.transfer', 'dianjing.level', 'readingMode.wordGuide.enabled',
     'readingMode.wordGuide.intensity', 'readingMode.wordGuide.color', 'readingMode.wordGuide.mark', 'dianjing.density',
     'dianjing.kinds']) {
     assert.ok(ALL_SYNC_PATHS.includes(p), `${p} 应同步`)
@@ -73,9 +73,9 @@ test('点睛阅读基础版「标什么」: 新安装默认重点词, 老存档�
   assert.equal(settingsDefaults().dianjing.kinds.kw, true)
 })
 
-test('可选功能 (书单推荐 / 互传) 默认关闭, 作为使用偏好随同步', () => {
-  assert.deepEqual(settingsDefaults().features, { recommendedBooklists: false, transfer: false })
-  assert.deepEqual(SETTINGS_SYNC_SPEC.features, { recommendedBooklists: 'sync', transfer: 'sync' })
+test('可选功能 (互传) 默认关闭, 作为使用偏好随同步', () => {
+  assert.deepEqual(settingsDefaults().features, { transfer: false })
+  assert.deepEqual(SETTINGS_SYNC_SPEC.features, { transfer: 'sync' })
 })
 
 test('分栏默认自动, 旧自动双栏迁移, 手动选择持久化与同步', () => {

@@ -124,8 +124,6 @@ export interface ReadingModePrefs {
 
 /** 可选功能开关 (设置 → 功能); 默认关, 开启后与原先完全一致 */
 export interface FeaturePrefs {
-  /** 书单推荐: 书源页的「书单推荐」区块与远程书单拉取 (自制书单 / 待找 / 分享导入不受影响) */
-  recommendedBooklists: boolean
   /** 互传: 侧栏入口、后台收取、「发送到其他设备」等所有入口 */
   transfer: boolean
 }
@@ -466,7 +464,6 @@ const defaults: SettingsState = {
     pauseWhenHidden: true,
   },
   features: {
-    recommendedBooklists: false,
     transfer: false,
   },
   comicDownload: {
