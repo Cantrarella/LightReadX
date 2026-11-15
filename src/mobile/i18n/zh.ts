@@ -963,7 +963,6 @@ export default {
   'update.platformPendingTitle': '发现 v{version}，本平台安装包还没上传，点击查看发布页',
   'update.platformPending': '本平台安装包还没上传，已打开发布页；上传后会重新检查。',
   'update.openFailed': '没能打开安装包，再试一次',
-  'update.allPlatforms': '全部平台安装包 →',
   'update.copyLinkTitle': '复制下载链接，用浏览器下载',
   'update.viaProxy': '经代理 {proxy}',
   'update.downloadedTo': '已下载到',

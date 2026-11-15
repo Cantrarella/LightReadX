@@ -139,6 +139,16 @@ export const useBookSourceStore = defineStore('bookSources', {
       if (this.records.length !== before) persist(this.records)
     },
 
+    /** 批量删除书源（按本地 id 集合），返回删除数量 */
+    removeSources(ids: Iterable<string>): number {
+      const set = new Set(ids)
+      const before = this.records.length
+      this.records = this.records.filter(r => !set.has(r.id))
+      const removed = before - this.records.length
+      if (removed > 0) persist(this.records)
+      return removed
+    },
+
     /** 启用 / 停用单个书源 */
     setEnabled(id: string, enabled: boolean) {
       const rec = this.records.find(r => r.id === id)

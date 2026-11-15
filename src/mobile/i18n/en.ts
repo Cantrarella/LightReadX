@@ -963,7 +963,6 @@ export default {
   'update.platformPendingTitle': 'Version {version} is available; no installer for this platform yet. Open the release page.',
   'update.platformPending': 'There’s no installer for this platform yet. The release page is open, and LightRead will check again later.',
   'update.openFailed': "Couldn't open the installer. Try again",
-  'update.allPlatforms': 'All platform downloads →',
   'update.copyLinkTitle': 'Copy the download link to use in a browser',
   'update.viaProxy': 'via proxy {proxy}',
   'update.downloadedTo': 'Downloaded to',

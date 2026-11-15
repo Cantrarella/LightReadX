@@ -740,6 +740,11 @@ async function downloadOption(d: DownloadOption) {
     return
   }
   if (installing.value) return
+  // 已下载过同一安装包: 不再重复下载, 直接跳到安装 / 打开
+  if (installedPath.value) {
+    await installDownloaded()
+    return
+  }
   installing.value = t('common.connecting')
   installedPath.value = ''
   needsInstallPermission.value = false
@@ -1697,9 +1702,6 @@ const APPEARANCE_OPTIONS = [
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 5a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-2v-2h2a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v2H8V5zM2 11a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-8zm3-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1H5z"/></svg>
             </button>
           </template>
-          <a class="all-downloads" href="javascript:void 0" @click="download(updateInfo.pageUrl)">
-            {{ t('update.allPlatforms') }}
-          </a>
         </div>
         <div v-if="installing" class="install-progress">
           {{ installing }}

@@ -207,12 +207,42 @@ function nextChapter() {
 // ---------------------------------------------------------------------------
 const importing = ref(false)
 const importText = ref('')
+const importUrl = ref('')
+const importingUrl = ref(false)
 
 onMounted(() => {
   store.load()
 })
 
 const hasSources = computed(() => store.count > 0)
+
+/** 更多导入方式面板的展开状态 */
+const showImportPanel = ref(false)
+function toggleImportPanel() {
+  showImportPanel.value = !showImportPanel.value
+}
+
+/** 网络导入：从书源 JSON / 订阅地址拉取内容并解析 */
+async function importFromUrl() {
+  const url = importUrl.value.trim()
+  if (!url || importingUrl.value) return
+  importingUrl.value = true
+  try {
+    const { fetchRemote } = await import('../services/net')
+    const res = await fetchRemote(url, undefined, { headers: { accept: 'application/json, text/plain, */*' } })
+    const text = await res.text()
+    if (!text.trim()) {
+      toast(t('bookSource.importNothing'), 'info')
+      return
+    }
+    doImport(text)
+    importUrl.value = ''
+  } catch (err) {
+    toast(t('bookSource.importUrlFailed', { msg: String(err) }), 'error')
+  } finally {
+    importingUrl.value = false
+  }
+}
 
 async function importFile() {
   importing.value = true
@@ -320,6 +350,24 @@ async function checkAll() {
   }
 }
 
+/** 检测失败的书源 id（已检测且 ok === false） */
+const failedSourceIds = computed(() =>
+  store.records.filter(r => checkResults.value[r.id] && !checkResults.value[r.id].ok).map(r => r.id))
+
+/** 批量删除检测失败的书源 */
+function removeFailedSources() {
+  const ids = failedSourceIds.value
+  if (ids.length === 0) {
+    toast(t('bookSource.noFailedSources'), 'info')
+    return
+  }
+  const confirmed = window.confirm(t('bookSource.deleteFailedConfirm', { count: ids.length }))
+  if (!confirmed) return
+  const removed = store.removeSources(ids)
+  for (const id of ids) delete checkResults.value[id]
+  toast(t('bookSource.deleteFailedDone', { count: removed }), 'success')
+}
+
 async function exportSources() {
   const list = store.records
   if (list.length === 0) {
@@ -390,10 +438,47 @@ function doImport(text: string) {
           <button class="btn btn-sm" :disabled="importing" @click="importFile">
             {{ t('bookSource.importFile') }}
           </button>
+          <button class="btn btn-sm" @click="toggleImportPanel">
+            {{ t('bookSource.moreImport') }}
+          </button>
           <button v-if="hasSources" class="btn btn-sm" @click="toggleSourceList">
             {{ t('bookSource.manageSources') }}
           </button>
         </span>
+      </section>
+
+      <!-- 更多导入方式（网络 / 粘贴） -->
+      <section v-if="showImportPanel" class="card import-panel">
+        <div class="import-panel-head">
+          <span class="source-list-title">{{ t('bookSource.moreImport') }}</span>
+        </div>
+        <!-- 网络导入 -->
+        <div class="import-row">
+          <input
+            v-model="importUrl"
+            type="url"
+            class="search-input import-url-input"
+            :placeholder="t('bookSource.importUrlPlaceholder')"
+            :aria-label="t('bookSource.importUrlPlaceholder')"
+            @keyup.enter="importFromUrl"
+          />
+          <button class="btn btn-sm" :disabled="importingUrl || !importUrl.trim()" @click="importFromUrl">
+            {{ importingUrl ? t('bookSource.importingUrl') : t('bookSource.importFromUrl') }}
+          </button>
+        </div>
+        <!-- 粘贴导入 -->
+        <textarea
+          v-model="importText"
+          class="import-textarea"
+          :placeholder="t('bookSource.pastePlaceholder')"
+          rows="4"
+          :aria-label="t('bookSource.pastePlaceholder')"
+        />
+        <div class="import-actions">
+          <button class="btn btn-sm" :disabled="importing || !importText.trim()" @click="importPaste">
+            {{ t('bookSource.importPaste') }}
+          </button>
+        </div>
       </section>
 
       <!-- 书源管理列表 -->
@@ -403,6 +488,9 @@ function doImport(text: string) {
           <span class="source-list-actions">
             <button v-if="hasSources" class="btn btn-sm" :disabled="checkingAll" @click="checkAll">
               {{ checkingAll ? t('bookSource.checkingAll') : t('bookSource.checkAll') }}
+            </button>
+            <button v-if="failedSourceIds.length" class="btn btn-sm" @click="removeFailedSources">
+              {{ t('bookSource.deleteFailed', { count: failedSourceIds.length }) }}
             </button>
             <button v-if="hasSources" class="btn btn-sm" @click="exportSources">
               {{ t('bookSource.export') }}
@@ -796,6 +884,26 @@ input, textarea {
   border-radius: var(--radius-lg);
   background: var(--bg-secondary);
   text-align: center;
+}
+
+/* ---- 更多导入方式面板 ---- */
+.import-panel {
+  margin-bottom: 16px;
+}
+
+.import-panel-head {
+  margin-bottom: 12px;
+}
+
+.import-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.import-url-input {
+  flex: 1;
+  font-size: var(--fs-sm);
 }
 
 .import-tip {
