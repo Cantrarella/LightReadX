@@ -344,3 +344,51 @@ export async function searchAllSourcesMerged(
   }
   return merged
 }
+
+/** 单个书源的健康检测结果 */
+export interface SourceCheckResult {
+  /** 源是否可用 */
+  ok: boolean
+  /** 结果说明（成功/失败原因） */
+  message: string
+  /** 检测返回的结果条数（成功时 > 0） */
+  count: number
+  /** 耗时（毫秒） */
+  elapsedMs: number
+}
+
+/**
+ * 书源健康检测：用测试关键词做一次真实搜索，判断源是否仍可用。
+ *
+ * 判定标准：
+ *  - 源缺少 searchUrl 或 ruleSearch.bookList → 直接判为「规则不完整」
+ *  - 搜索抛错 → 「请求失败」
+ *  - 搜索成功但结果为空 → 「搜索无结果」（可能源失效或关键词不对）
+ *  - 结果 >= 1 → 可用
+ */
+export async function checkSource(
+  source: BookSource,
+  key = '斗破苍穹',
+): Promise<SourceCheckResult> {
+  const started = Date.now()
+  const done = (ok: boolean, message: string, count = 0): SourceCheckResult => ({
+    ok,
+    message,
+    count,
+    elapsedMs: Date.now() - started,
+  })
+
+  if (!source.searchUrl || !source.ruleSearch?.bookList) {
+    return done(false, '规则不完整（缺搜索 URL 或 bookList）')
+  }
+
+  try {
+    const results = await searchSource(source, key)
+    if (results.length > 0) {
+      return done(true, '可用', results.length)
+    }
+    return done(false, '搜索无结果（源可能已失效）', 0)
+  } catch (err) {
+    return done(false, `请求失败：${String(err).slice(0, 80)}`)
+  }
+}

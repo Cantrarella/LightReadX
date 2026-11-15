@@ -131,6 +131,36 @@ export const useBookSourceStore = defineStore('bookSources', {
       this.records = []
       persist(this.records)
     },
+
+    /** 删除单个书源（按本地 id） */
+    removeSource(id: string) {
+      const before = this.records.length
+      this.records = this.records.filter(r => r.id !== id)
+      if (this.records.length !== before) persist(this.records)
+    },
+
+    /** 启用 / 停用单个书源 */
+    setEnabled(id: string, enabled: boolean) {
+      const rec = this.records.find(r => r.id === id)
+      if (!rec || rec.enabled === enabled) return
+      rec.enabled = enabled
+      persist(this.records)
+    },
+
+    /** 切换单个书源启用状态，返回新状态 */
+    toggleEnabled(id: string): boolean {
+      const rec = this.records.find(r => r.id === id)
+      if (!rec) return false
+      rec.enabled = !rec.enabled
+      persist(this.records)
+      return rec.enabled
+    },
+
+    /** 导出全部书源为 JSON 文本（供备份/分享） */
+    exportSources(): string {
+      const list = this.records.map(r => r.source)
+      return JSON.stringify(list, null, 2)
+    },
   },
 })
 

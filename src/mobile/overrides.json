@@ -29,7 +29,6 @@
   "services/updater.ts",
   "stores/library.ts",
   "styles/main.css",
-  "views/CatalogView.vue",
   "views/LibraryView.vue",
   "views/ManualView.vue",
   "views/PaperReaderView.vue",
