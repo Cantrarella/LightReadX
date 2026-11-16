@@ -14,20 +14,23 @@ const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as con
  * foliate 正文在 iframe 里, 其中的点击按键不会冒泡到 window); 朗读推进、自动滚动调用 pingAuto().
  */
 export function useReadingTimer(
-  bookId: string,
+  /** 书库 id; 传函数时每次落库现取 (漫画阅读器在线模式没有 bookId, 返回空串即不记录) */
+  bookId: string | (() => string),
 ): { ping: () => void; pingAuto: () => void } {
   const library = useLibrary()
   const clock = createReadingClock(Date.now())
   let timer: ReturnType<typeof setInterval> | undefined
 
+  const resolveId = () => (typeof bookId === 'function' ? bookId() : bookId) || ''
   const ping = () => clock.input(Date.now())
   const pingAuto = () => clock.auto(Date.now())
 
   const flush = () => {
     const at = clock.creditedAt
     const seconds = clock.drain()
-    if (seconds > 0) {
-      library.addReadingTime(bookId, seconds, at)
+    const id = resolveId()
+    if (seconds > 0 && id) {
+      library.addReadingTime(id, seconds, at)
     }
   }
 

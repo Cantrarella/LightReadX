@@ -13,10 +13,13 @@ import { t } from '../i18n'
 import { toast } from '../services/toast'
 import { getStorage, isTauri, type AnnotationRec } from '../storage'
 import { useSettings } from '../stores/settings'
+import { useLibrary } from '../stores/library'
+import { useReadingTimer } from '../composables/useReadingTimer'
 import { useAmbient } from '../services/ambient'
 import AmbientPanel from '../components/AmbientPanel.vue'
 import { setWindowFullscreen } from '../services/windowChrome'
 import { loadLocalComic } from '../services/comicLocal'
+import { comicLocationOf, comicProgressOf, comicResumeIndex } from '../services/comicProgress'
 import {
   chapterRequestId, normalizeChapter, normalizeDetail, openPlugin,
   type ComicPluginHost,
@@ -28,10 +31,19 @@ import type { ComicChapter, ComicChapterResult, ComicDetailResult, ComicPage } f
 const route = useRoute()
 const router = useRouter()
 const settings = useSettings()
+const library = useLibrary()
 
 /** 本地漫画模式: /read/comic-local/:id 无 uuid/comicId/chapterId 三段 */
 const isLocal = computed(() => route.path.startsWith('/read/comic-local'))
 const bookId = computed(() => String(route.params.id ?? ''))
+
+/** 当前这本书的 id; 离开阅读器时 route 已经切走 (isLocal 变 false, params 也没了),
+ *  不能再靠 route 判断, 否则卸载时的补存/时长冲账会被自己挡掉 */
+const activeBookId = ref(isLocal.value ? bookId.value : '')
+watch(bookId, id => { if (isLocal.value && id) activeBookId.value = id })
+
+/** 阅读时长 (今日/本周): 只有本地漫画在书库里有记录, 在线漫画没有 bookId 就不计 */
+const { ping: pingReading } = useReadingTimer(() => activeBookId.value)
 
 const uuid = computed(() => isLocal.value ? '' : String(route.params.uuid ?? ''))
 const comicId = computed(() => isLocal.value ? '' : String(route.params.comicId ?? ''))
@@ -358,6 +370,31 @@ function saveProgress() {
   try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(all)) } catch { /* 空间满了就算了 */ }
 }
 
+// ---- 书库进度 (最近阅读卡片 / 继续阅读百分比) ----
+// 藏书页与漫画页的「最近阅读」卡片读的是书库元数据的 lastReadAt + progress;
+// 只写上面那份 localStorage 的话卡片永远不出现、百分比永远是 0。
+// 翻页很密 (长条模式滚动会连续触发), 所以落库走 800ms 防抖, 离开阅读器时强制补存一次。
+let librarySaveTimer: ReturnType<typeof setTimeout> | undefined
+
+function flushLibraryProgress() {
+  clearTimeout(librarySaveTimer)
+  librarySaveTimer = undefined
+  if (!activeBookId.value) return
+  const total = pages.value.length
+  if (!total) return
+  void library.saveProgress(
+    activeBookId.value,
+    comicLocationOf(pageIndex.value),
+    comicProgressOf(pageIndex.value, total),
+  )
+}
+
+function scheduleLibraryProgress() {
+  if (!activeBookId.value) return
+  clearTimeout(librarySaveTimer)
+  librarySaveTimer = setTimeout(flushLibraryProgress, 800)
+}
+
 async function loadChapter(id: string) {
   if (!host || !id) return
   loading.value = true
@@ -420,7 +457,7 @@ async function boot() {
 /** 本地漫画: 解包 CBZ/CBR, 把每张图直接塞进 urls 交给渲染 (不走插件) */
 async function bootLocal() {
   try {
-    const local = await loadLocalComic(bookId.value)
+    const local = await loadLocalComic(activeBookId.value)
     comicTitle.value = local.title || comicTitle.value
     chapterName.value = ''
     // pages 只用于 total / 长度, 实际图片已在 urls 里
@@ -430,9 +467,13 @@ async function bootLocal() {
     }
     if (!pages.value.length) throw new Error(t('comics.noPages'))
 
-    // 续读: 本地书按 bookId 记进度
-    const saved = readProgress()[`local:${bookId.value}`]
-    const start = saved ? Math.min(saved.page, pages.value.length - 1) : 0
+    // 续读: 优先 localStorage 里的精确页码 (历史进度都在), 没有就按书库进度折算 (清过缓存的兜底)
+    const saved = readProgress()[`local:${activeBookId.value}`]
+    const meta = library.books.find(b => b.id === activeBookId.value)
+      ?? await (await getStorage()).getBook(activeBookId.value)
+    const start = saved
+      ? Math.min(Math.max(saved.page, 0), pages.value.length - 1)
+      : comicResumeIndex(meta?.location, meta?.progress, pages.value.length)
     pageIndex.value = start
 
     await new Promise(resolve => requestAnimationFrame(resolve))
@@ -440,6 +481,8 @@ async function bootLocal() {
       setupObserver()
       scrollToPage(start)
     }
+    // 打开即算「最近阅读」: 先落一次库, 卡片不用等翻页才出现
+    flushLibraryProgress()
   } catch (e: any) {
     bootError.value = e?.message ?? t('common.unknownError')
     toast(bootError.value, 'error', 6000)
@@ -491,6 +534,8 @@ function goPage(delta: number) {
 function setPage(index: number) {
   pageIndex.value = index
   saveProgress()
+  scheduleLibraryProgress()
+  pingReading()
   if (mode.value === 'long') {
     scrollToPage(index)
   } else {
@@ -577,7 +622,7 @@ function onScroll() {
     if (row.offsetTop - 40 <= top) best = Number(row.dataset.pageIndex)
     else break
   }
-  if (best !== pageIndex.value) { pageIndex.value = best; saveProgress() }
+  if (best !== pageIndex.value) { pageIndex.value = best; saveProgress(); scheduleLibraryProgress() }
 }
 
 watch(chapterId, id => { if (id && host) void loadChapter(id) })
@@ -592,6 +637,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.clearTimeout(barsTimer)
+  // 离开阅读器: 防抖中的进度立刻落库, 不然最后几页会漏记
+  flushLibraryProgress()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', syncWideWindow)
   document.removeEventListener('fullscreenchange', syncFullscreenState)
