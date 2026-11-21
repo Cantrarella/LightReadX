@@ -16,7 +16,6 @@ import { t } from '../i18n'
 import { shortAuthor, shortTitle } from '../services/displayTitle'
 import { loadDaily, localDay, onReadingLogChange } from '../services/readingLog'
 import { weekStartOf } from '../services/readingStats'
-import { MQ, useMediaQuery } from '../composables/useMediaQuery'
 import type { BookMeta } from '../storage'
 import {
   installFromFile, installFromUrl, listPlugins, removePlugin, setPluginEnabled,
@@ -25,11 +24,13 @@ import {
 import { checkUpdates, installStoreEntry, type StoreUpdate } from '../services/comicPlugin/store'
 import BookCard from '../components/BookCard.vue'
 import AppModal from '../components/AppModal.vue'
+import AppSelect from '../components/AppSelect.vue'
+import { vAutofocus } from '../directives/autofocus'
+import { sendBookToDevices } from '../services/transfer'
 
 const router = useRouter()
 const library = useLibrary()
 const settings = useSettings()
-const phone = useMediaQuery(MQ.phone)
 
 // ---- 今日 / 本周阅读时长 (与藏书页一致, 并入「最近阅读」卡片) ----
 const todaySeconds = ref(0)
@@ -58,6 +59,12 @@ const goalMinutes = computed(() => Math.max(0, Math.round(settings.dailyGoalMinu
 const todayRatio = computed(() => (goalMinutes.value > 0 ? Math.min(1, todaySeconds.value / (goalMinutes.value * 60)) : 0))
 const todayDone = computed(() => goalMinutes.value > 0 && todayRatio.value >= 1)
 const keyword = ref('')
+const sortBy = ref<'recent' | 'added' | 'title' | 'author'>('recent')
+const manageMode = ref(false)
+const selectedIds = ref<Set<string>>(new Set())
+const tagFilter = ref('')
+const showTagModal = ref(false)
+const tagDraft = ref('')
 /* 上次停在哪个 tab 记下来: 从别的页面切回「漫画」时不会又跳回本地列表 */
 const TAB_KEY = 'lightread.comics.tab.v1'
 const savedTab = (() => {
@@ -66,21 +73,43 @@ const savedTab = (() => {
 const activeTab = ref<'local' | 'sources'>(savedTab)
 watch(activeTab, value => {
   try { localStorage.setItem(TAB_KEY, value) } catch { /* 忽略 */ }
+  if (value !== 'local') {
+    manageMode.value = false
+    selectedIds.value = new Set()
+  }
 })
 const importing = ref(false)
 const fileInput = ref<HTMLInputElement>()
 const pluginFileInput = ref<HTMLInputElement>()
 
 const localComics = computed(() => library.books.filter(b => isComicFormat(b.format)))
+const allTags = computed(() => {
+  const set = new Set<string>()
+  for (const b of localComics.value) for (const tag of b.tags) set.add(tag)
+  return [...set].sort()
+})
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  const list = kw
-    ? localComics.value.filter(b =>
+  const list = localComics.value.filter(b => {
+    if (tagFilter.value && !b.tags.includes(tagFilter.value)) return false
+    if (!kw) return true
+    return (
       b.title.toLowerCase().includes(kw)
       || b.author.toLowerCase().includes(kw)
-      || b.tags.some(tag => tag.toLowerCase().includes(kw)))
-    : localComics.value
-  return [...list].sort((a, b) => (b.lastReadAt ?? b.addedAt) - (a.lastReadAt ?? a.addedAt))
+      || b.tags.some(tag => tag.toLowerCase().includes(kw))
+    )
+  })
+  return [...list].sort((a, b) => {
+    const pa = a.pinnedAt ?? 0
+    const pb = b.pinnedAt ?? 0
+    if (pa !== pb) return pb - pa
+    switch (sortBy.value) {
+      case 'added': return b.addedAt - a.addedAt
+      case 'title': return a.title.localeCompare(b.title, 'zh')
+      case 'author': return a.author.localeCompare(b.author, 'zh')
+      default: return (b.lastReadAt ?? b.addedAt) - (a.lastReadAt ?? a.addedAt)
+    }
+  })
 })
 
 // ---- 最近阅读 (本地漫画里最近打开的一本) ----
@@ -103,16 +132,166 @@ function openBook(book: BookMeta) {
   router.push(readerPath(book))
 }
 
+function cleanupLocalProgress(ids: string[]) {
+  try {
+    const raw = localStorage.getItem('lightread.comic.reader.v1')
+    if (!raw) return
+    const map = JSON.parse(raw) as Record<string, unknown>
+    let changed = false
+    for (const id of ids) {
+      const key = `local:${id}`
+      if (key in map) {
+        delete map[key]
+        changed = true
+      }
+    }
+    if (changed) localStorage.setItem('lightread.comic.reader.v1', JSON.stringify(map))
+  } catch { /* 忽略 */ }
+}
+
 async function removeBook(book: BookMeta) {
   await library.removeBook(book.id)
+  cleanupLocalProgress([book.id])
+  if (tagFilter.value && !allTags.value.includes(tagFilter.value)) tagFilter.value = ''
+}
+
+// ---- 批量管理 (复刻藏书页逻辑) ----
+function toggleManage() {
+  manageMode.value = !manageMode.value
+  selectedIds.value = new Set()
+}
+
+function toggleSelect(id: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+const allVisibleSelected = computed(() =>
+  filtered.value.length > 0 && filtered.value.every(b => selectedIds.value.has(b.id)))
+
+function selectAll() {
+  selectedIds.value = allVisibleSelected.value
+    ? new Set()
+    : new Set(filtered.value.map(b => b.id))
+}
+
+watch(filtered, list => {
+  if (!selectedIds.value.size) return
+  const visible = new Set(list.map(b => b.id))
+  const next = new Set([...selectedIds.value].filter(id => visible.has(id)))
+  if (next.size !== selectedIds.value.size) selectedIds.value = next
+})
+
+function onLongPress(book: BookMeta) {
+  manageMode.value = true
+  selectedIds.value = new Set([book.id])
+}
+
+const selectedComics = computed(() => localComics.value.filter(b => selectedIds.value.has(b.id)))
+const allSelectedPinned = computed(() => !!selectedComics.value.length && selectedComics.value.every(b => b.pinnedAt))
+const allSelectedPrivate = computed(() => !!selectedComics.value.length && selectedComics.value.every(b => b.noSync))
+
+async function batchDelete() {
+  const ids = [...selectedIds.value]
+  const count = ids.length
+  if (!count || !(await askConfirm(t('library.batchDeleteConfirm', { count }), deleteConfirmOptions(t('library.batchDeleteTitle', { count }))))) return
+  let deleted = 0
+  const removedIds: string[] = []
+  try {
+    for (const id of ids) {
+      await library.removeBook(id)
+      removedIds.push(id)
+      deleted += 1
+    }
+    cleanupLocalProgress(removedIds)
+    selectedIds.value = new Set()
+    manageMode.value = false
+    if (tagFilter.value && !allTags.value.includes(tagFilter.value)) tagFilter.value = ''
+    toast(t('library.batchDeleted', { count }), 'success')
+  } catch (error: unknown) {
+    cleanupLocalProgress(removedIds)
+    selectedIds.value = new Set(ids.filter(id => library.books.some(book => book.id === id)))
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.batchDeleteFailed', { deleted, msg }), 'error', 7000)
+  }
+}
+
+async function togglePin(book: BookMeta) {
+  const storage = await (await import('../storage')).getStorage()
+  const pinnedAt = book.pinnedAt ? 0 : Date.now()
+  await storage.updateBook(book.id, { pinnedAt })
+  book.pinnedAt = pinnedAt || undefined
+  toast(pinnedAt ? t('library.pinned') : t('library.unpinned'), 'success')
+}
+
+async function batchPin(pin: boolean) {
+  const storage = await (await import('../storage')).getStorage()
+  let stamp = Date.now()
+  for (const id of selectedIds.value) {
+    const book = localComics.value.find(b => b.id === id)
+    if (!book) continue
+    const pinnedAt = pin ? stamp-- : 0
+    await storage.updateBook(id, { pinnedAt })
+    book.pinnedAt = pinnedAt || undefined
+  }
+  toast(pin ? t('library.pinned') : t('library.unpinned'), 'success')
 }
 
 /** 设为 / 取消私密 (与藏书页一致: noSync 标记, 同步时跳过) */
-async function setPrivate(book: BookMeta, on: boolean) {
+async function setPrivate(ids: string[], on: boolean) {
   const storage = await (await import('../storage')).getStorage()
-  await storage.updateBook(book.id, { noSync: on })
-  book.noSync = on || undefined
+  for (const id of ids) {
+    const book = localComics.value.find(b => b.id === id)
+    if (!book) continue
+    await storage.updateBook(id, { noSync: on })
+    book.noSync = on || undefined
+  }
   toast(on ? t('library.privateOn') : t('library.privateOff'), 'success')
+}
+
+async function batchPrivate(on: boolean) {
+  await setPrivate([...selectedIds.value], on)
+}
+
+async function batchTag() {
+  const tags = tagDraft.value.split(/[,，、]/).map(item => item.trim()).filter(Boolean)
+  if (!tags.length) return
+  const storage = await (await import('../storage')).getStorage()
+  for (const id of selectedIds.value) {
+    const book = localComics.value.find(b => b.id === id)
+    if (!book) continue
+    const merged = [...new Set([...book.tags, ...tags])]
+    await storage.updateBook(id, { tags: merged })
+    book.tags = merged
+  }
+  showTagModal.value = false
+  tagDraft.value = ''
+  toast(t('library.tagsAdded', { count: selectedIds.value.size }), 'success')
+}
+
+async function batchClearTags() {
+  const storage = await (await import('../storage')).getStorage()
+  for (const id of selectedIds.value) {
+    const book = localComics.value.find(b => b.id === id)
+    if (!book || !book.tags.length) continue
+    await storage.updateBook(id, { tags: [] })
+    book.tags = []
+  }
+  if (tagFilter.value && !allTags.value.includes(tagFilter.value)) tagFilter.value = ''
+  showTagModal.value = false
+  tagDraft.value = ''
+  toast(t('library.tagsCleared', { count: selectedIds.value.size }), 'success')
+}
+
+function onKeyDown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (showInstall.value || showTagModal.value) return
+  if (manageMode.value) {
+    manageMode.value = false
+    selectedIds.value = new Set()
+  }
 }
 
 async function onFiles(event: Event) {
@@ -145,8 +324,12 @@ onMounted(() => {
   plugins.value = listPlugins()
   void refreshToday()
   stopReadingLog = onReadingLogChange(() => void refreshToday())
+  window.addEventListener('keydown', onKeyDown)
 })
-onBeforeUnmount(() => { stopReadingLog?.() })
+onBeforeUnmount(() => {
+  stopReadingLog?.()
+  window.removeEventListener('keydown', onKeyDown)
+})
 function refreshPlugins() { plugins.value = listPlugins() }
 
 async function onPluginFiles(event: Event) {
@@ -281,10 +464,27 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16v12H4zM4 10h16M9 6v12"/></svg>
         {{ t('comics.store') }}
       </button>
-      <button v-if="activeTab === 'local'" class="btn btn-primary" :disabled="importing" @click="fileInput?.click()">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
-        {{ t('comics.import') }}
-      </button>
+      <template v-if="activeTab === 'local'">
+        <AppSelect v-if="localComics.length" v-model="sortBy" class="sort-select" :aria-label="t('common.sortBy')">
+          <option value="recent">{{ t('library.sortRecent') }}</option>
+          <option value="added">{{ t('library.sortAdded') }}</option>
+          <option value="title">{{ t('library.sortTitle') }}</option>
+          <option value="author">{{ t('library.sortAuthor') }}</option>
+        </AppSelect>
+        <button
+          v-if="localComics.length"
+          class="btn btn-sm"
+          :class="manageMode ? 'btn-primary' : 'btn-ghost'"
+          :aria-pressed="manageMode"
+          @click="toggleManage"
+        >
+          {{ manageMode ? t('common.done') : t('library.manage') }}
+        </button>
+        <button class="btn btn-primary" :disabled="importing" @click="fileInput?.click()">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 13H5a1 1 0 1 1 0-2h6V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6z"/></svg>
+          {{ t('comics.import') }}
+        </button>
+      </template>
       <input ref="fileInput" type="file" accept=".cbz,.cbr,application/x-cbz,application/x-cbr" multiple hidden @change="onFiles" />
     </header>
 
@@ -305,7 +505,7 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
         </span>
       </div>
       <!-- 桌面: 今日 / 本周时长并入继续阅读卡 (与藏书页一致) -->
-      <div v-if="!phone" class="resume-stats">
+      <div class="resume-stats">
         <router-link to="/stats" class="resume-stat" :title="t('stats.libraryTodayTitle', { m: todayMinutes })" @click.stop @keydown.enter.stop>
           <b>{{ todayMinutes }}<small>{{ goalMinutes > 0 ? t('library.statGoalMinutes', { goal: goalMinutes }) : t('library.statMinutes') }}</small></b>
           <span :class="{ done: todayDone }">{{ t('library.statToday') }}</span>
@@ -330,26 +530,59 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
     </div>
 
     <section v-if="activeTab === 'local'" class="comic-section">
+      <!-- 标签筛选 -->
+      <div v-if="allTags.length" class="tag-row">
+        <button class="tag-chip" :class="{ active: !tagFilter }" :aria-pressed="!tagFilter" @click="tagFilter = ''">{{ t('library.filterAll') }}</button>
+        <button
+          v-for="tag in allTags"
+          :key="tag"
+          class="tag-chip"
+          :class="{ active: tagFilter === tag }"
+          :aria-pressed="tagFilter === tag"
+          @click="tagFilter = tagFilter === tag ? '' : tag"
+        >{{ tag }}</button>
+      </div>
+
       <div v-if="filtered.length" class="grid">
         <BookCard
           v-for="book in filtered"
           :key="book.id"
           :book="book"
           :cover-url="library.coverUrls[book.id]"
+          :selectable="manageMode"
+          :selected="selectedIds.has(book.id)"
+          :sendable="settings.features.transfer"
           @open="openBook(book)"
           @remove="removeBook(book)"
-          @toggle-private="setPrivate(book, !book.noSync)"
+          @long-press="onLongPress(book)"
+          @toggle-select="toggleSelect(book.id)"
+          @toggle-pin="togglePin(book)"
+          @send="sendBookToDevices(book.id)"
+          @toggle-private="setPrivate([book.id], !book.noSync)"
         />
       </div>
       <div v-else class="empty">
         <div class="empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="10" rx="1"/><rect x="13" y="3" width="8" height="6" rx="1"/><rect x="3" y="15" width="8" height="6" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/></svg>
         </div>
-        <p class="empty-title">{{ keyword ? t('comics.noMatch') : t('comics.localEmptyTitle') }}</p>
+        <p class="empty-title">{{ keyword || tagFilter ? t('comics.noMatch') : t('comics.localEmptyTitle') }}</p>
         <p class="hint">{{ t('comics.localEmptyHint') }}</p>
         <div class="empty-actions">
           <button class="btn btn-primary" @click="fileInput?.click()">{{ t('comics.import') }}</button>
         </div>
+      </div>
+
+      <!-- 桌面批量操作栏 -->
+      <div v-if="manageMode" class="batch-bar card" role="toolbar" :aria-label="t('library.manage')">
+        <span class="batch-count">{{ t('library.selectedCount', { count: selectedIds.size }) }}</span>
+        <button class="btn btn-sm" @click="selectAll">
+          {{ allVisibleSelected ? t('library.deselectAll') : t('library.selectAll') }}
+        </button>
+        <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPin(!allSelectedPinned)">{{ allSelectedPinned ? t('library.unpin') : t('library.pin') }}</button>
+        <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPrivate(!allSelectedPrivate)">{{ allSelectedPrivate ? t('library.unsetPrivate') : t('library.setPrivate') }}</button>
+        <button class="btn btn-sm" :disabled="!selectedIds.size" @click="showTagModal = true">{{ t('library.setTags') }}</button>
+        <button class="btn btn-sm btn-danger" :disabled="!selectedIds.size" @click="batchDelete">{{ t('common.delete') }}</button>
+        <button class="btn btn-sm" @click="toggleManage">{{ t('common.done') }}</button>
       </div>
     </section>
 
@@ -422,6 +655,19 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
           <input v-model="installUrl" class="search install-input" type="url" :placeholder="t('comics.sourceUrlPlaceholder')" @keyup.enter="onInstallUrl" />
           <button class="btn btn-primary" :disabled="installing || !installUrl.trim()" @click="onInstallUrl">{{ t('comics.install') }}</button>
           <p class="hint">{{ t('comics.urlHint') }}</p>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- 批量标签弹窗 -->
+    <AppModal v-if="showTagModal" :title="t('library.tagModalTitle', { count: selectedIds.size })" @close="showTagModal = false">
+      <div class="tag-dialog">
+        <input v-model="tagDraft" v-autofocus class="input full" :placeholder="t('library.tagPlaceholder')" :aria-label="t('library.setTags')" @keyup.enter="batchTag" />
+        <div class="form-actions">
+          <button class="btn btn-sm" @click="batchClearTags">{{ t('library.clearTags') }}</button>
+          <span class="spacer" />
+          <button class="btn btn-sm" @click="showTagModal = false">{{ t('common.cancel') }}</button>
+          <button class="btn btn-sm btn-primary" :disabled="!tagDraft.trim()" @click="batchTag">{{ t('common.add') }}</button>
         </div>
       </div>
     </AppModal>
@@ -563,6 +809,27 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
 .install-body { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .install-body .btn { width: 100%; }
 .install-input { padding-left: 12px; }
+
+/* ---- 批量管理 / 标签 / 排序 (复刻藏书页) ---- */
+.sort-select { width: auto; height: var(--control-h); min-height: 0; padding: 0 10px; font-size: 13px; border-radius: var(--radius-sm); }
+.tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.tag-chip {
+  height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--card); color: var(--text-2); font-size: 12px; font-weight: 500;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tag-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.tag-chip:focus-visible { outline: none; box-shadow: var(--ring); }
+.tag-chip.active { background: var(--brand-light); border-color: var(--brand); color: var(--brand); }
+.batch-bar {
+  position: sticky; bottom: calc(16px + var(--lr-safe-bottom)); margin-top: 20px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 14px;
+  box-shadow: var(--shadow-lg); z-index: 10; animation: menu-in var(--dur) var(--ease);
+}
+.batch-count { font-size: 13px; font-weight: 600; color: var(--text); min-width: 70px; font-variant-numeric: tabular-nums; }
+.tag-dialog { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.tag-dialog .full { width: 100%; }
+.form-actions { display: flex; align-items: center; gap: 8px; }
 
 /* ---- 桌面端 (≥721px): 最近阅读卡片对齐藏书页继续阅读 ---- */
 @media (min-width: 721px) {

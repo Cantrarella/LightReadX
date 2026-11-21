@@ -9,10 +9,11 @@
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = new URL('..', import.meta.url).pathname
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const BASELINE = join(ROOT, 'scripts/style-tokens-baseline.json')
-const SKIP = new Set(['src/vendor', 'src/styles/main.css', 'src/mobile/styles/main.css'])
+const SKIP = new Set(['src/vendor', 'src/styles/main.css'])
 
 const RULES = {
   /** font-size 写死 px (阅读正文字号来自用户设置, 走变量, 不计入) */
@@ -28,7 +29,7 @@ const RULES = {
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name)
-    const rel = relative(ROOT, path)
+    const rel = relative(ROOT, path).replace(/\\/g, '/')
     if (SKIP.has(rel)) continue
     if (statSync(path).isDirectory()) walk(path, out)
     else if (/\.(vue|css)$/.test(name)) out.push(path)

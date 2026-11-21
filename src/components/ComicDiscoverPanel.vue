@@ -6,13 +6,14 @@
  * 独立发现页已取消, 本组件嵌在 ComicSourceView 里, 点漫画或搜索词通过 emit
  * 交给父页面切到详情 / 搜索视图, 保证整个漫画源只有一个入口。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { toast } from '../services/toast'
 import { openExternalLink } from '../services/transfer'
-import { getPlugin, isUnauthorizedError, openPlugin, type ComicPluginHost } from '../services/comicPlugin'
-import { bytesToObjectUrl } from '../services/comicPlugin/download'
+import { getPlugin, isUnauthorizedError } from '../services/comicPlugin'
+import { getSourceSession, saveSourceSession } from '../services/comicPlugin/sourceSession'
+import { useComicCovers } from '../composables/useComicCovers'
 import AppModal from './AppModal.vue'
 import {
   comicIdOf, loadDiscoverHome, loadFunctionPage, loadSceneFilter,
@@ -27,14 +28,15 @@ const emit = defineEmits<{
   (e: 'openSearch', payload: { keyword: string }): void
 }>()
 const router = useRouter()
-const uuid = props.uuid
-const plugin = getPlugin(uuid)
+const plugin = computed(() => getPlugin(props.uuid))
 
 type Overlay =
   | { kind: 'scene'; scene: ComicListScene; title: string }
   | { kind: 'function'; id: string; title: string }
 
 const home = ref<DiscoverHome | null>(null)
+const panelRoot = ref<HTMLElement | null>(null)
+let homeScrollTop = 0
 const activeTab = ref('')
 const overlay = ref<Overlay | null>(null)
 const functionPage = ref<DiscoverPage | null>(null)
@@ -49,43 +51,137 @@ const showFilter = ref(false)
 const loading = ref(false)
 const error = ref('')
 const needLogin = ref(false)
-const covers = reactive<Record<string, string>>({})
+let requestSeq = 0
+let restoredViewKey: string | null = null
 
-let coverHost: ComicPluginHost | null = null
-let coverSeq = 0
-/** 卡片 id → 封面地址; 懒加载观察器命中时用它查要拉哪张 */
-const coverUrls = new Map<string, string>()
-const coverInFlight = new Set<string>()
-let coverObserver: IntersectionObserver | null = null
+function currentViewKey() {
+  const ovKey = overlay.value?.kind === 'scene'
+    ? `scene:${overlay.value.scene.id ?? overlay.value.title}`
+    : overlay.value?.kind === 'function'
+      ? `fn:${overlay.value.id}`
+      : ''
+  return `${props.uuid}|${activeTab.value}|${ovKey}`
+}
 
-onBeforeUnmount(() => {
-  coverObserver?.disconnect()
-  coverObserver = null
-  coverHost?.dispose()
-  coverHost = null
-  for (const url of Object.values(covers)) URL.revokeObjectURL(url)
+function clearSelectionMaps() {
+  for (const key of Object.keys(filterSelection)) delete filterSelection[key]
+  for (const key of Object.keys(childSelection)) delete childSelection[key]
+}
+
+const {
+  covers,
+  loadList: loadCoverList,
+  cancelPending: cancelCoverPending,
+} = useComicCovers(() => props.uuid, {
+  prefetchLimit: 40,
+  workers: 6,
+  maxCached: 200,
+  container: () => panelRoot.value,
 })
 
+function loadCovers(list: Array<{ id: string; cover: string }>) {
+  const mapped = list
+    .map(item => ({ key: item.id, url: item.cover }))
+    .filter(item => item.key && item.url)
+  return loadCoverList(mapped, '[data-cover-id]')
+}
+
+function syncSession() {
+  saveSourceSession(props.uuid, {
+    discoverHome: home.value,
+    discoverTab: activeTab.value,
+    discoverHomeScrollTop: homeScrollTop,
+    discoverOverlay: overlay.value?.kind === 'scene'
+      ? {
+          kind: 'scene',
+          scene: overlay.value.scene,
+          title: overlay.value.title,
+          items: sceneItems.value,
+          page: scenePage.value,
+          max: sceneMax.value,
+          extern: sceneExtern.value,
+          filters: filters.value,
+          filterSelection: { ...filterSelection },
+          childSelection: { ...childSelection },
+        }
+      : overlay.value?.kind === 'function'
+        ? {
+            kind: 'function',
+            id: overlay.value.id,
+            title: overlay.value.title,
+            page: functionPage.value,
+          }
+        : null,
+  })
+}
+
 async function loadHome() {
+  const seq = ++requestSeq
   loading.value = true
   error.value = ''
   needLogin.value = false
   overlay.value = null
   try {
-    home.value = await loadDiscoverHome(uuid)
+    const res = await loadDiscoverHome(props.uuid)
+    if (seq !== requestSeq) return
+    home.value = res
     // 设置页「查看云端收藏」可用 ?tab=cloudFavorite 直接落到云端收藏 tab
     const requested = String(props.initialTab ?? '')
-    const match = home.value.tabs.find(tab => tab.id === requested)
-      ?? (requested === 'cloudFavorite' ? home.value.tabs.find(tab => tab.id.startsWith('cloudFavorite:')) : undefined)
-    activeTab.value = match?.id ?? home.value.tabs[0]?.id ?? ''
+    const match = res.tabs.find(tab => tab.id === requested)
+      ?? (requested === 'cloudFavorite' ? res.tabs.find(tab => tab.id.startsWith('cloudFavorite:')) : undefined)
+    activeTab.value = match?.id ?? res.tabs[0]?.id ?? ''
+    syncSession()
   } catch (e) {
-    handleError(e)
+    if (seq === requestSeq) handleError(e)
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 
-onMounted(() => { void loadHome() })
+function initPanel() {
+  clearSelectionMaps()
+  homeScrollTop = 0
+  restoredViewKey = null
+  const session = getSourceSession(props.uuid)
+  if (session?.discoverHome) {
+    home.value = session.discoverHome
+    homeScrollTop = session.discoverHomeScrollTop ?? 0
+    activeTab.value = session.discoverTab ?? session.discoverHome.tabs[0]?.id ?? ''
+    if (session.discoverOverlay?.kind === 'scene') {
+      const ov = session.discoverOverlay
+      overlay.value = { kind: 'scene', scene: ov.scene, title: ov.title }
+      sceneItems.value = ov.items
+      scenePage.value = ov.page
+      sceneMax.value = ov.max
+      sceneExtern.value = ov.extern
+      filters.value = ov.filters
+      Object.assign(filterSelection, ov.filterSelection)
+      Object.assign(childSelection, ov.childSelection)
+    } else if (session.discoverOverlay?.kind === 'function') {
+      const ov = session.discoverOverlay
+      overlay.value = { kind: 'function', id: ov.id, title: ov.title }
+      functionPage.value = ov.page
+    } else {
+      overlay.value = null
+    }
+    restoredViewKey = currentViewKey()
+    void loadCovers(visibleCovers())
+    return
+  }
+  void loadHome()
+}
+
+onMounted(() => { initPanel() })
+watch(() => props.uuid, () => {
+  requestSeq++
+  cancelCoverPending()
+  home.value = null
+  overlay.value = null
+  sceneItems.value = []
+  functionPage.value = null
+  filters.value = []
+  initPanel()
+})
 
 const currentTab = computed(() => home.value?.tabs.find(tab => tab.id === activeTab.value))
 const currentScene = computed<ComicListScene | null>(() => {
@@ -99,67 +195,8 @@ const currentBlocks = computed<DiscoverBlock[]>(() => {
 })
 const heading = computed(() => {
   if (overlay.value) return overlay.value.title
-  return currentTab.value?.title || plugin?.name || t('comics.discoverTitle')
+  return currentTab.value?.title || plugin.value?.name || t('comics.discoverTitle')
 })
-
-/** 封面也走插件 fetchImageBytes (带防盗链头), 一个长驻宿主并发拉取 */
-/** 一次最多补多少张封面: 列表动辄 40 条, 全量拉会把插件宿主占满, 界面像卡死 */
-const COVER_LIMIT = 40
-const COVER_WORKERS = 6
-
-async function loadCovers(items: Array<{ id: string; cover: string }>) {
-  for (const item of items) if (item.cover && item.id) coverUrls.set(item.id, item.cover)
-  const seq = ++coverSeq
-  const queue = items.filter(i => i.cover && i.id && !covers[i.id]).slice(0, COVER_LIMIT)
-  if (!queue.length) { void watchCovers(); return }
-  if (!coverHost) coverHost = await openPlugin(uuid)
-  const host = coverHost
-  if (seq !== coverSeq) return
-  let cursor = 0
-  const worker = async () => {
-    while (seq === coverSeq && cursor < queue.length) {
-      const item = queue[cursor++]
-      try {
-        const bytes = await host.callBytes('fetchImageBytes', { url: item.cover }, { timeoutMs: 20_000 })
-        if (seq === coverSeq && bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, item.cover)
-      } catch { /* 单张失败用占位图 */ }
-    }
-  }
-  await Promise.all(Array.from({ length: COVER_WORKERS }, () => worker()))
-  if (seq === coverSeq) void watchCovers()
-}
-
-/** 单张封面: 滚动/横滑到哪补到哪, 分区页动辄上百张, 不能一次全拉 */
-async function loadOneCover(id: string, cover: string) {
-  if (covers[id] || !cover) return
-  if (!coverHost) coverHost = await openPlugin(uuid)
-  const bytes = await coverHost.callBytes('fetchImageBytes', { url: cover }, { timeoutMs: 20_000 })
-  if (bytes?.length) covers[id] = bytesToObjectUrl(bytes, cover)
-}
-
-function watchCovers() {
-  if (typeof IntersectionObserver === 'undefined') return
-  if (!coverObserver) {
-    coverObserver = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue
-        const el = entry.target as HTMLElement
-        const id = el.dataset.coverId
-        const cover = id ? coverUrls.get(id) : undefined
-        if (!id || !cover || covers[id] || coverInFlight.has(id)) continue
-        coverInFlight.add(id)
-        coverObserver?.unobserve(el)
-        void loadOneCover(id, cover)
-          .catch(() => { /* 失败留占位图 */ })
-          .finally(() => coverInFlight.delete(id))
-      }
-    }, { rootMargin: '240px' })
-  }
-  void nextTick(() => {
-    document.querySelectorAll<HTMLElement>('[data-cover-id]')
-      .forEach(el => coverObserver?.observe(el))
-  })
-}
 
 function coverKey(item: DiscoverItem): string {
   return item.id || item.cover
@@ -191,7 +228,7 @@ function handleError(e: unknown) {
 }
 
 function goToSettings() {
-  void router.push(`/comics/settings/${encodeURIComponent(uuid)}`)
+  void router.push(`/comics/settings/${encodeURIComponent(props.uuid)}`)
 }
 
 /** 当前选中项的二级选项 (Breeze children 联动) */
@@ -207,38 +244,51 @@ function selectFilter(field: FilterField, index: number) {
 
 /** 当前视图 (tab / overlay) 变化时重新拉数据 */
 async function reloadView() {
+  const shouldSkip = restoredViewKey !== null && restoredViewKey === currentViewKey()
+  restoredViewKey = null
+  if (shouldSkip) return
+  cancelCoverPending()
+  const seq = ++requestSeq
   error.value = ''
   needLogin.value = false
   const scene = currentScene.value
   const fn = overlay.value?.kind === 'function' ? overlay.value : null
   if (!scene && !fn) {
+    syncSession()
     void loadCovers(visibleCovers())
     return
   }
   loading.value = true
   try {
     if (fn) {
-      functionPage.value = await loadFunctionPage(uuid, fn.id)
+      const page = await loadFunctionPage(props.uuid, fn.id)
+      if (seq !== requestSeq) return
+      functionPage.value = page
     } else if (scene) {
       sceneItems.value = []
       scenePage.value = 1
       sceneMax.value = false
-      filters.value = await loadSceneFilter(uuid, scene)
+      const f = await loadSceneFilter(props.uuid, scene)
+      if (seq !== requestSeq) return
+      filters.value = f
       for (const key of Object.keys(filterSelection)) delete filterSelection[key]
       for (const key of Object.keys(childSelection)) delete childSelection[key]
-      await fetchScenePage(1)
+      await fetchScenePage(1, seq)
     }
-    void loadCovers(visibleCovers())
+    if (seq === requestSeq) {
+      syncSession()
+      void loadCovers(visibleCovers())
+    }
   } catch (e) {
-    handleError(e)
+    if (seq === requestSeq) handleError(e)
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 
 watch([activeTab, overlay], () => { void reloadView() }, { flush: 'post' })
 
-async function fetchScenePage(page: number) {
+async function fetchScenePage(page: number, seq = requestSeq) {
   const scene = currentScene.value
   if (!scene) return
   const chosen = filters.value.flatMap(field => {
@@ -251,9 +301,10 @@ async function fetchScenePage(page: number) {
     return child ? [option, child] : [option]
   })
   const { core, extern } = mergeFilterResult(chosen)
-  const result = await loadScenePage(uuid, scene, page, {
+  const result = await loadScenePage(props.uuid, scene, page, {
     core, extern: { ...extern, ...(page > 1 ? sceneExtern.value ?? {} : {}) },
   })
+  if (seq !== requestSeq) return
   sceneItems.value = page === 1 ? result.items : [...sceneItems.value, ...result.items]
   scenePage.value = page
   sceneMax.value = result.hasReachedMax || result.items.length === 0
@@ -262,19 +313,37 @@ async function fetchScenePage(page: number) {
 
 async function loadMore() {
   if (sceneMax.value || loading.value) return
+  const seq = ++requestSeq
   loading.value = true
-  try { await fetchScenePage(scenePage.value + 1); void loadCovers(visibleCovers()) }
-  catch (e) { handleError(e) }
-  finally { loading.value = false }
+  try {
+    await fetchScenePage(scenePage.value + 1, seq)
+    if (seq === requestSeq) {
+      syncSession()
+      void loadCovers(visibleCovers())
+    }
+  } catch (e) {
+    if (seq === requestSeq) handleError(e)
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
 
 async function applyFilter() {
   showFilter.value = false
   needLogin.value = false
+  const seq = ++requestSeq
   loading.value = true
-  try { await fetchScenePage(1); void loadCovers(visibleCovers()) }
-  catch (e) { handleError(e) }
-  finally { loading.value = false }
+  try {
+    await fetchScenePage(1, seq)
+    if (seq === requestSeq) {
+      syncSession()
+      void loadCovers(visibleCovers())
+    }
+  } catch (e) {
+    if (seq === requestSeq) handleError(e)
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
 
 function resetFilter() {
@@ -283,10 +352,28 @@ function resetFilter() {
   void applyFilter()
 }
 
+function getScrollContainer(): HTMLElement | null {
+  return (panelRoot.value?.closest('.main') as HTMLElement | null) ?? (document.scrollingElement as HTMLElement | null)
+}
+
+function saveHomeScroll() {
+  const el = getScrollContainer()
+  if (el) homeScrollTop = el.scrollTop
+}
+
 function closeOverlay() {
   overlay.value = null
   functionPage.value = null
   sceneItems.value = []
+  const top = homeScrollTop
+  const apply = () => {
+    const el = getScrollContainer()
+    if (el) el.scrollTop = top
+  }
+  void nextTick(() => {
+    apply()
+    requestAnimationFrame(apply)
+  })
 }
 
 function openComic(item: DiscoverItem) {
@@ -313,13 +400,27 @@ function runAction(action?: PluginAction) {
     }
     case 'openComicList': {
       const scene = normalizeScene(payload.scene)
-      if (scene) overlay.value = { kind: 'scene', scene, title: scene.title || String(payload.title ?? t('comics.discover')) }
+      if (scene) {
+        if (!overlay.value) saveHomeScroll()
+        overlay.value = { kind: 'scene', scene, title: scene.title || String(payload.title ?? t('comics.discover')) }
+        void nextTick(() => {
+          const el = getScrollContainer()
+          if (el) el.scrollTop = 0
+        })
+      }
       else toast(t('comics.discoverUnsupported'), 'error')
       break
     }
     case 'openPluginFunction': {
       const id = String(payload.id ?? '')
-      if (id) overlay.value = { kind: 'function', id, title: String(payload.title ?? t('comics.discover')) }
+      if (id) {
+        if (!overlay.value) saveHomeScroll()
+        overlay.value = { kind: 'function', id, title: String(payload.title ?? t('comics.discover')) }
+        void nextTick(() => {
+          const el = getScrollContainer()
+          if (el) el.scrollTop = 0
+        })
+      }
       else toast(t('comics.discoverUnsupported'), 'error')
       break
     }
@@ -347,7 +448,7 @@ function onSectionMore(block: DiscoverBlock, sectionIndex: number) {
 </script>
 
 <template>
-  <div class="comic-discover">
+  <div ref="panelRoot" class="comic-discover">
     <p v-if="!plugin" class="error-text">{{ t('comics.sourceMissing') }}</p>
     <template v-else>
       <!-- tab 与操作按钮同一行; 插件设置由父页面顶栏提供, 这里不重复 -->

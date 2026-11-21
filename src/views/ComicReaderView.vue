@@ -271,6 +271,8 @@ function onStageClick(event: MouseEvent) {
 
 // ---- 取图 ----
 function evict(budget = MAX_CACHED) {
+  // 本地 CBZ/CBR 全量解压在内存且没有远程 host 重新拉图，不能驱逐已解码页
+  if (isLocal.value) return
   const keys = Object.keys(urls).map(Number)
   if (keys.length <= budget) return
   const current = pageIndex.value
@@ -430,12 +432,19 @@ async function loadChapter(id: string) {
   }
 }
 
+let unmounted = false
+
 async function boot() {
   loading.value = true
   bootError.value = ''
   if (isLocal.value) { await bootLocal(); return }
   try {
-    host = await openPlugin(uuid.value)
+    const createdHost = await openPlugin(uuid.value)
+    if (unmounted) {
+      createdHost.dispose()
+      return
+    }
+    host = createdHost
     const raw = await host.call<ComicDetailResult>('getComicDetail', { comicId: comicId.value }, { timeoutMs: 45_000 })
     const info = normalizeDetail(raw)
     chapters.value = [...info.chapters].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
@@ -636,6 +645,7 @@ onMounted(() => {
   showBars(true)
 })
 onBeforeUnmount(() => {
+  unmounted = true
   window.clearTimeout(barsTimer)
   // 离开阅读器: 防抖中的进度立刻落库, 不然最后几页会漏记
   flushLibraryProgress()

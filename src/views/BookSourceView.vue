@@ -11,6 +11,7 @@ import { searchAllSourcesMerged, checkSource } from '../services/legado/crawler'
 import { getTocForEntry, getChapterCached, clearCachedBook } from '../services/legado/reader'
 import type { MergedSearchBook, BookSourceEntry, ChapterItem } from '../services/legado/types'
 import { toast } from '../services/toast'
+import { askConfirm, deleteConfirmOptions } from '../services/confirm'
 import { t } from '../i18n'
 
 const store = useBookSourceStore()
@@ -110,10 +111,10 @@ async function clearCurrentBookCache() {
   const entry = selectedEntry.value
   const book = currentBook.value
   if (!entry || !book || clearingCache.value) return
-  const confirmed = window.confirm(t('bookSource.clearBookCacheConfirm', {
-    name: book.name,
-    source: entry.sourceName,
-  }))
+  const confirmed = await askConfirm(
+    t('bookSource.clearBookCacheConfirm', { name: book.name, source: entry.sourceName }),
+    deleteConfirmOptions(t('bookSource.clearBookCache')),
+  )
   if (!confirmed) return
 
   clearingCache.value = true
@@ -259,14 +260,36 @@ async function importFile() {
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = '.json,.txt,application/json'
+        let settled = false
+        const finish = (value: string) => {
+          if (settled) return
+          settled = true
+          window.removeEventListener('focus', onFocus)
+          resolve(value)
+        }
+        const onFocus = () => {
+          setTimeout(() => {
+            if (!input.files?.length) finish('')
+          }, 300)
+        }
+        input.oncancel = () => finish('')
         input.onchange = () => {
           const file = input.files?.[0]
-          if (!file) { resolve(''); return }
+          if (!file) { finish(''); return }
           const reader = new FileReader()
-          reader.onload = () => resolve(String(reader.result ?? ''))
-          reader.onerror = () => reject(new Error('读取文件失败'))
+          reader.onload = () => {
+            settled = true
+            window.removeEventListener('focus', onFocus)
+            resolve(String(reader.result ?? ''))
+          }
+          reader.onerror = () => {
+            settled = true
+            window.removeEventListener('focus', onFocus)
+            reject(new Error('读取文件失败'))
+          }
           reader.readAsText(file)
         }
+        window.addEventListener('focus', onFocus, { once: true })
         input.click()
       })
     }
@@ -308,10 +331,13 @@ function toggleSource(id: string) {
   store.toggleEnabled(id)
 }
 
-function removeSource(id: string) {
+async function removeSource(id: string) {
   const rec = store.records.find(r => r.id === id)
   if (!rec) return
-  const confirmed = window.confirm(t('bookSource.deleteConfirm', { name: rec.source.bookSourceName }))
+  const confirmed = await askConfirm(
+    t('bookSource.deleteConfirm', { name: rec.source.bookSourceName }),
+    deleteConfirmOptions(t('common.delete')),
+  )
   if (!confirmed) return
   store.removeSource(id)
   delete checkResults.value[id]
@@ -336,13 +362,18 @@ async function checkAll() {
   if (checkingAll.value) return
   checkingAll.value = true
   const list = store.records.filter(r => r.enabled)
+  let cursor = 0
+  const workers = Math.min(4, list.length)
   try {
-    await Promise.all(list.map(async rec => {
-      try {
-        const result = await checkSource(rec.source)
-        checkResults.value[rec.id] = { ok: result.ok, message: result.message, count: result.count }
-      } catch (err) {
-        checkResults.value[rec.id] = { ok: false, message: String(err), count: 0 }
+    await Promise.all(Array.from({ length: workers }, async () => {
+      while (cursor < list.length) {
+        const rec = list[cursor++]
+        try {
+          const result = await checkSource(rec.source)
+          checkResults.value[rec.id] = { ok: result.ok, message: result.message, count: result.count }
+        } catch (err) {
+          checkResults.value[rec.id] = { ok: false, message: String(err), count: 0 }
+        }
       }
     }))
   } finally {
@@ -355,13 +386,16 @@ const failedSourceIds = computed(() =>
   store.records.filter(r => checkResults.value[r.id] && !checkResults.value[r.id].ok).map(r => r.id))
 
 /** 批量删除检测失败的书源 */
-function removeFailedSources() {
+async function removeFailedSources() {
   const ids = failedSourceIds.value
   if (ids.length === 0) {
     toast(t('bookSource.noFailedSources'), 'info')
     return
   }
-  const confirmed = window.confirm(t('bookSource.deleteFailedConfirm', { count: ids.length }))
+  const confirmed = await askConfirm(
+    t('bookSource.deleteFailedConfirm', { count: ids.length }),
+    deleteConfirmOptions(t('common.delete')),
+  )
   if (!confirmed) return
   const removed = store.removeSources(ids)
   for (const id of ids) delete checkResults.value[id]

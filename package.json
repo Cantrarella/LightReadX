@@ -6,9 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "android:build": "node scripts/build-android.mjs",
-    "ios:sim": "node scripts/build-ios.mjs",
-    "ios:ipa": "node scripts/build-ios.mjs --ipa",
     "test:comic-plugin": "node scripts/test-comic-plugin.mjs",
     "test:comic-store": "node scripts/test-comic-store.mjs",
     "test:comic-store-net": "node scripts/test-comic-store-net.mjs",
@@ -21,12 +18,10 @@
     "test:book-sources": "node --experimental-strip-types --test scripts/test-catalog-errors.mjs scripts/test-open-library.mjs scripts/test-internet-archive.mjs scripts/test-philosophy-archive.mjs scripts/test-web-book-sources.mjs scripts/test-opds-download.mjs scripts/test-github-books.mjs scripts/test-book-query.mjs scripts/test-wendian.mjs",
     "test:legado": "node --experimental-strip-types --test scripts/test-legado-parser.mjs scripts/test-legado-url.mjs scripts/test-legado-e2e.mjs scripts/test-book-source-store.mjs scripts/test-legado-reader.mjs",
     "test:archive": "node scripts/test-library-archive.mjs",
-    "e2e:mobile": "node scripts/e2e-mobile.mjs",
     "e2e:v2": "node scripts/e2e-v2.mjs",
     "e2e:reader-refinements": "node scripts/e2e-reader-refinements.mjs",
     "e2e:v2-reading": "node scripts/e2e-v2-reading.mjs",
     "e2e:v2-features": "node scripts/e2e-v2-features.mjs",
-    "test:app-boundary": "node --experimental-strip-types --test scripts/test-platform-boundary.mjs scripts/test-mobile-tts.mjs scripts/test-apk-layout.mjs",
     "test:plain-text": "node --experimental-strip-types --test scripts/test-plain-text.mjs",
     "test:convert-epub": "node --experimental-strip-types --test scripts/test-convert-epub.mjs",
     "test:pdf-reflow": "node --experimental-strip-types --test scripts/test-pdf-reflow.mjs",
@@ -51,7 +46,6 @@
     "test:sync-large-files": "node --experimental-strip-types --test scripts/test-sync-large-files.mjs",
     "test:chunked-write": "node --experimental-strip-types --test scripts/test-chunked-write.mjs",
     "test:reading-log": "node --experimental-strip-types --test scripts/test-reading-log.mjs",
-    "preview": "npm run build && wrangler dev",
     "tauri": "tauri",
     "e2e": "node scripts/e2e-smoke.mjs",
     "e2e:epub-compat": "node scripts/e2e-epub-compat.mjs",
@@ -134,7 +128,6 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.44.0",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.13.2",
     "@vitejs/plugin-vue": "^6.0.7",
@@ -143,9 +136,7 @@
     "playwright": "^1.61.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vite-plugin-pwa": "^1.3.0",
-    "vue-tsc": "^3.3.5",
-    "wrangler": "^4.110.0"
+    "vue-tsc": "^3.3.5"
   },
   "description": "LightRead 轻阅 — 开源本地阅读器",
   "license": "AGPL-3.0-or-later"

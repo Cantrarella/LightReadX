@@ -95,6 +95,7 @@ function toBlob(bytes: Uint8Array, type: string): Blob {
 
 let zipWorker: Worker | null = null
 let zipSeq = 0
+const pendingZipRejects = new Set<(err: Error) => void>()
 
 /** 打包交给 Worker, 大章节也不会把界面卡住; Worker 起不来就退回主线程 */
 function packAsync(entries: Array<{ name: string; bytes: Uint8Array }>): Promise<Uint8Array> {
@@ -110,17 +111,27 @@ function packAsync(entries: Array<{ name: string; bytes: Uint8Array }>): Promise
     const worker = zipWorker
     const id = ++zipSeq
     return new Promise((resolve, reject) => {
+      const rejectSelf = (err: Error) => {
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        pendingZipRejects.delete(rejectSelf)
+        reject(err)
+      }
+      pendingZipRejects.add(rejectSelf)
       const onMessage = (event: MessageEvent) => {
         if (event.data?.id !== id) return
         worker.removeEventListener('message', onMessage)
         worker.removeEventListener('error', onError)
+        pendingZipRejects.delete(rejectSelf)
         if (event.data.error) reject(new Error(event.data.error))
         else resolve(event.data.zipped as Uint8Array)
       }
       const onError = (event: ErrorEvent) => {
-        worker.removeEventListener('message', onMessage)
-        worker.removeEventListener('error', onError)
-        reject(event.error ?? new Error(event.message))
+        // Worker 崩溃后销毁并置空，且通知所有正在等待该 Worker 的并发打包任务
+        worker.terminate()
+        if (zipWorker === worker) zipWorker = null
+        const err = event.error instanceof Error ? event.error : new Error(event.message || 'zip worker error')
+        for (const fn of [...pendingZipRejects]) fn(err)
       }
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)

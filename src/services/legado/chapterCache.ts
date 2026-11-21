@@ -148,7 +148,10 @@ function getBackend(): Promise<ChapterCacheBackend> {
       const b = isTauri() ? new SqliteCache() : new LocalStorageCache()
       await b.init()
       return b
-    })()
+    })().catch(err => {
+      ready = null
+      throw err
+    })
   }
   return ready
 }

@@ -60,7 +60,6 @@ jobs:
           npm run test:notes-export
           npm run test:quote-card
           npm run check:style-tokens
-          node --experimental-strip-types --test scripts/test-mobile-updater.mjs scripts/test-platform-boundary.mjs
       - name: 在构建前准备 Release 草稿
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

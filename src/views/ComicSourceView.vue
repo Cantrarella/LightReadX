@@ -4,15 +4,15 @@
  * → 在线阅读 / 章节下载入库。原「发现」页已并入这里的浏览面板。
  * UI 沿用藏书页与漫画页的卡片、按钮、工具栏语言, 不另起一套视觉。
  */
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from '../services/toast'
 import { t } from '../i18n'
 import {
-  chapterRequestId, coverUrl, getPlugin, openPlugin, search, detail,
-  type ComicPluginHost,
+  chapterRequestId, coverUrl, getPlugin, search, detail,
 } from '../services/comicPlugin'
-import { bytesToObjectUrl } from '../services/comicPlugin/download'
+import { clearSourceSession, getSourceSession, saveSourceSession } from '../services/comicPlugin/sourceSession'
+import { useComicCovers } from '../composables/useComicCovers'
 import { cancel as cancelTask, enqueue, findTask, initDownloads, matchesDownloadedBook, resume } from '../services/comicPlugin/downloadCenter'
 import type { DetailChip, DetailMetaGroup } from '../services/comicPlugin/normalize'
 import ComicDiscoverPanel from '../components/ComicDiscoverPanel.vue'
@@ -25,12 +25,15 @@ import type {
 const route = useRoute()
 const router = useRouter()
 const library = useLibrary()
-const uuid = String(route.params.uuid ?? '')
-const plugin = getPlugin(uuid)
+const uuid = computed(() => String(route.params.uuid ?? ''))
+const plugin = computed(() => getPlugin(uuid.value))
 /** 设置页「查看云端收藏」会带 ?tab=cloudFavorite 落到对应 tab */
-const initialTab = String(route.query.tab ?? '')
+const initialTab = computed(() => String(route.query.tab ?? ''))
 
 const view = ref<'browse' | 'search' | 'detail'>('browse')
+const sourceRoot = ref<HTMLElement | null>(null)
+const detailOrigin = ref<'browse' | 'search'>('browse')
+const viewScrollTop: Record<'browse' | 'search', number> = { browse: 0, search: 0 }
 const keyword = ref('')
 const searchInput = ref<HTMLInputElement>()
 const page = ref(1)
@@ -38,7 +41,6 @@ const items = ref<ComicSearchItem[]>([])
 const paging = ref<ComicPaging | undefined>()
 const searching = ref(false)
 const searchError = ref('')
-const covers = reactive<Record<string, string>>({})
 
 const comicId = ref('')
 const info = ref<ComicInfo | undefined>()
@@ -49,99 +51,78 @@ const recommend = ref<ComicSearchItem[]>([])
 const stats = reactive({ views: 0, likes: 0, comments: 0 })
 const loadingDetail = ref(false)
 const detailError = ref('')
+let detailSeq = 0
 
-let coverHost: ComicPluginHost | null = null
-let coverSeq = 0
-
-onBeforeUnmount(() => {
-  coverObserver?.disconnect()
-  coverObserver = null
-  coverHost?.dispose()
-  coverHost = null
-  for (const url of Object.values(covers)) URL.revokeObjectURL(url)
+const {
+  covers,
+  fetchOne: fetchCoverOne,
+  loadList: loadCoverList,
+  cancelPending: cancelCoverPending,
+} = useComicCovers(() => uuid.value, {
+  prefetchLimit: 12,
+  workers: 3,
+  maxCached: 180,
+  container: () => sourceRoot.value,
 })
 
-/** 封面也走插件的 fetchImageBytes (带防盗链头), 一个长驻宿主并发拉取 */
-/** 一次最多预取多少张封面: 搜索结果动辄 80 条, 全量同步拉会把插件宿主占满 */
-const COVER_LIMIT = 12
-const COVER_WORKERS = 3
-
-/** 单张封面: 供滚动懒加载使用 */
-async function loadOneCover(item: ComicSearchItem) {
-  const url = coverUrl(item.cover)
-  if (!url || covers[item.id]) return
-  if (!coverHost) coverHost = await openPlugin(uuid)
-  const bytes = await coverHost.callBytes('fetchImageBytes', { url }, { timeoutMs: 20_000 })
-  if (bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, url)
+function loadCovers(list: ComicSearchItem[]) {
+  const mapped = list
+    .map(item => ({ key: item.id, url: coverUrl(item.cover) }))
+    .filter((entry): entry is { key: string; url: string } => !!entry.url)
+  return loadCoverList(mapped, '.result-card[data-cover-id]')
 }
 
-// 滚动到哪补到哪: 首屏预取 COVER_LIMIT 张, 其余等卡片进入视口再拉,
-// 既不会出现大片占位图, 也不会因为一次拉几十上百张把界面拖死
-let coverObserver: IntersectionObserver | null = null
-const coverInFlight = new Set<string>()
-let coverItems: ComicSearchItem[] = []
+/** 浏览/搜索与详情共用外层 .main 滚动容器, 切换视图前保存并在返回时恢复位置 */
+function getScrollContainer(): HTMLElement | null {
+  return (sourceRoot.value?.closest('.main') as HTMLElement | null) ?? (document.scrollingElement as HTMLElement | null)
+}
 
-function watchCovers(list: ComicSearchItem[]) {
-  coverItems = list
-  if (typeof IntersectionObserver === 'undefined') return
-  coverObserver?.disconnect()
-  coverObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue
-      const id = (entry.target as HTMLElement).dataset.coverId
-      const item = id ? coverItems.find(i => i.id === id) : undefined
-      if (!item || covers[item.id] || coverInFlight.has(item.id)) continue
-      coverInFlight.add(item.id)
-      coverObserver?.unobserve(entry.target)
-      void loadOneCover(item).catch(() => { /* 失败留占位图 */ })
-        .finally(() => coverInFlight.delete(item.id))
-    }
-  }, { rootMargin: '300px' })
+function saveScroll(target: 'browse' | 'search') {
+  const el = getScrollContainer()
+  if (el) viewScrollTop[target] = el.scrollTop
+}
+
+function scrollToTop() {
   void nextTick(() => {
-    document.querySelectorAll<HTMLElement>('.result-card[data-cover-id]')
-      .forEach(el => coverObserver?.observe(el))
+    const el = getScrollContainer()
+    if (el) el.scrollTop = 0
   })
 }
 
-async function loadCovers(list: ComicSearchItem[]) {
-  const seq = ++coverSeq
-  if (!coverHost) coverHost = await openPlugin(uuid)
-  const host = coverHost
-  if (seq !== coverSeq) return
-  const queue = list.filter(item => {
-    const url = coverUrl(item.cover)
-    return url && !covers[item.id]
-  }).slice(0, COVER_LIMIT)
-  let cursor = 0
-  const worker = async () => {
-    while (seq === coverSeq && cursor < queue.length) {
-      const item = queue[cursor++]
-      const url = coverUrl(item.cover)
-      try {
-        const bytes = await host.callBytes('fetchImageBytes', { url }, { timeoutMs: 20_000 })
-        if (seq === coverSeq && bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, url)
-      } catch { /* 单张封面失败用占位图 */ }
-    }
+function restoreScroll(target: 'browse' | 'search') {
+  const top = viewScrollTop[target] ?? 0
+  const apply = () => {
+    const el = getScrollContainer()
+    if (el) el.scrollTop = top
   }
-  await Promise.all(Array.from({ length: COVER_WORKERS }, () => worker()))
-  if (seq === coverSeq) watchCovers(list)
+  void nextTick(() => {
+    apply()
+    requestAnimationFrame(apply)
+  })
 }
 
 async function doSearch(reset = true) {
   const kw = keyword.value.trim()
   if (!kw || searching.value) return
-  coverSeq++            // 停掉上一批还在跑的封面任务, 别和新结果抢宿主
+  cancelCoverPending() // 停掉上一批还在跑的封面任务, 别和新结果抢宿主
+  if (view.value === 'browse') saveScroll('browse')
   view.value = 'search'
-  if (reset) { page.value = 1; items.value = []; paging.value = undefined }
+  if (reset) {
+    page.value = 1
+    items.value = []
+    paging.value = undefined
+    viewScrollTop.search = 0
+    scrollToTop()
+  }
   searching.value = true
   searchError.value = ''
   try {
-    const result = await search(uuid, kw, page.value)
+    const result = await search(uuid.value, kw, page.value)
     items.value = reset ? result.items : [...items.value, ...result.items]
     paging.value = result.paging
     void loadCovers(result.items)
-  } catch (e: any) {
-    searchError.value = e?.message ?? String(e)
+  } catch (e: unknown) {
+    searchError.value = e instanceof Error ? e.message : String(e)
   } finally {
     searching.value = false
   }
@@ -154,8 +135,17 @@ function loadMore() {
 }
 
 async function openDetail(item: ComicSearchItem) {
+  if (view.value === 'browse' || view.value === 'search') {
+    detailOrigin.value = view.value
+    saveScroll(view.value)
+  }
   view.value = 'detail'
+  scrollToTop()
+  batchMode.value = false
+  batchSelected.value.clear()
   comicId.value = item.id
+  const seq = ++detailSeq
+  const targetUuid = uuid.value
   // 把当前详情写进地址栏: 切到别的页面再回来(或刷新)能直接复原这一部
   void router.replace({
     path: route.path,
@@ -170,7 +160,8 @@ async function openDetail(item: ComicSearchItem) {
   detailError.value = ''
   loadingDetail.value = true
   try {
-    const result = await detail(uuid, item.id)
+    const result = await detail(targetUuid, item.id)
+    if (seq !== detailSeq || targetUuid !== uuid.value) return
     info.value = result.info
     chapters.value = [...result.chapters].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     titleMeta.value = result.titleMeta
@@ -182,26 +173,35 @@ async function openDetail(item: ComicSearchItem) {
     // 从列表 / 云收藏点进来时卡片可能没带封面, 详情的 cover.url 才是准的
     const infoCover = coverUrl(result.info?.cover) || coverUrl(item.cover)
     if (infoCover && !covers[item.id]) {
-      const host = await openPlugin(uuid)
-      try {
-        const bytes = await host.callBytes('fetchImageBytes', { url: infoCover }, { timeoutMs: 30_000 })
-        if (bytes?.length) covers[item.id] = bytesToObjectUrl(bytes, infoCover)
-      } catch { /* 忽略封面失败 */ } finally { host.dispose() }
+      void fetchCoverOne(item.id, infoCover, 30_000).catch(() => { /* 忽略封面失败 */ })
     }
     if (recommend.value.length) void loadCovers(recommend.value)
-  } catch (e: any) {
-    detailError.value = e?.message ?? String(e)
+  } catch (e: unknown) {
+    if (seq === detailSeq) detailError.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loadingDetail.value = false
+    if (seq === detailSeq) loadingDetail.value = false
   }
 }
 
-function backToBrowse() {
+function goBack() {
+  if (view.value === 'detail') {
+    const target = detailOrigin.value
+    view.value = target
+    if (route.query.comicId || route.query.title) {
+      const nextQuery = { ...route.query }
+      delete nextQuery.comicId
+      delete nextQuery.title
+      void router.replace({ path: route.path, query: nextQuery })
+    }
+    restoreScroll(target)
+    return
+  }
   view.value = 'browse'
-  // 从设置页 / 外部链接带参数进来时, 返回后清掉 query, 避免刷新又跳回详情
+  // 从设置页 / 外部链接带参数进来时, 返回后清掉 query, 避免刷新又跳回详情或搜索
   if (route.query.comicId || route.query.keyword || route.query.tab) {
     void router.replace({ path: route.path })
   }
+  restoreScroll('browse')
 }
 
 /** 浏览面板点漫画 → 详情; 点搜索词 / 空态引导 → 搜索视图 */
@@ -209,10 +209,14 @@ function onPanelComic(payload: { comicId: string; title?: string }) {
   void openDetail({ id: payload.comicId, title: payload.title ?? '' } as ComicSearchItem)
 }
 function onPanelSearch(payload: { keyword: string }) {
+  if (view.value === 'browse') saveScroll('browse')
   keyword.value = payload.keyword
   view.value = 'search'
   if (payload.keyword.trim()) void doSearch()
-  else searchInput.value?.focus()
+  else {
+    scrollToTop()
+    searchInput.value?.focus()
+  }
 }
 /** 详情里的作者 / 标签 chip 触发站内搜索 (Breeze 的 onTap.openSearch) */
 function onChipSearch(chip: DetailChip) {
@@ -225,13 +229,30 @@ function startReading() {
   if (first) void openReader(first)
 }
 function goSettings() {
-  void router.push(`/comics/settings/${encodeURIComponent(uuid)}`)
+  void router.push(`/comics/settings/${encodeURIComponent(uuid.value)}`)
 }
 
-/** 外部链接可带 comicId 直达详情 / keyword 自动搜索 / tab 定位云端收藏 */
-onMounted(() => {
-  initDownloads()
-  if (!plugin) return
+function leaveSource() {
+  clearSourceSession(uuid.value)
+  void router.push('/comics')
+}
+
+function restoreFromSession() {
+  const session = getSourceSession(uuid.value)
+  if (!session) return
+  detailOrigin.value = session.detailOrigin
+  keyword.value = session.keyword
+  page.value = session.page
+  items.value = session.items
+  paging.value = session.paging
+  viewScrollTop.browse = session.viewScrollTop.browse
+  viewScrollTop.search = session.viewScrollTop.search
+  if (session.items.length) void loadCovers(session.items)
+}
+
+function initForRoute() {
+  if (!plugin.value) return
+  restoreFromSession()
   const comicIdParam = String(route.query.comicId ?? '')
   if (comicIdParam) {
     void openDetail({ id: comicIdParam, title: String(route.query.title ?? '') } as ComicSearchItem)
@@ -241,18 +262,40 @@ onMounted(() => {
   if (keywordParam) {
     keyword.value = keywordParam
     void doSearch()
+  } else {
+    view.value = 'browse'
   }
-  // 其余情况保持 browse, 由 ComicDiscoverPanel 自己拉首页 tab
+}
+
+/** 外部链接可带 comicId 直达详情 / keyword 自动搜索 / tab 定位云端收藏 */
+onMounted(() => {
+  initDownloads()
+  initForRoute()
+})
+
+watch(uuid, () => {
+  detailSeq++
+  cancelCoverPending()
+  view.value = 'browse'
+  detailOrigin.value = 'browse'
+  batchMode.value = false
+  batchSelected.value.clear()
+  viewScrollTop.browse = 0
+  viewScrollTop.search = 0
+  keyword.value = ''
+  items.value = []
+  paging.value = undefined
+  initForRoute()
 })
 
 function taskOf(chapter: ComicChapter) {
-  return findTask(uuid, comicId.value, chapter)
+  return findTask(uuid.value, comicId.value, chapter)
 }
 
 /** 下载统一交给全局下载中心: 进度不随页面销毁, 侧栏「下载」也能看到 */
 async function download(chapter: ComicChapter) {
   const { task, skipped } = await enqueue({
-    uuid,
+    uuid: uuid.value,
     comicId: comicId.value,
     chapter,
     comicTitle: info.value?.title || comicId.value,
@@ -287,6 +330,7 @@ function toggleSelect(chapter: ComicChapter) {
 /** 全选/取消全选 (只统计「尚未入库」的章节) */
 function toggleSelectAll() {
   const downloadable = chapters.value.filter(c => !isDownloaded(c))
+  if (!downloadable.length) { toast(t('comics.batchNone'), 'info'); return }
   const allSelected = downloadable.every(c => batchSelected.value.has(chapterRequestId(c)))
   const next = new Set(batchSelected.value)
   if (allSelected) {
@@ -299,7 +343,10 @@ function toggleSelectAll() {
 
 function isDownloaded(chapter: ComicChapter): boolean {
   const task = taskOf(chapter)
-  return task?.status === 'done'
+  if (task?.status !== 'done') return false
+  if (!task.bookId) return true
+  // 若本地漫画已在藏书/漫画页被删除，允许重新入队下载
+  return library.books.some(b => matchesDownloadedBook(task, b))
 }
 
 /** 批量入队勾选的章节; 已入库的自动跳过 (enqueue 内部查重) */
@@ -311,7 +358,7 @@ async function batchDownload() {
   let skipped = 0
   for (const chapter of targets) {
     const { skipped: s } = await enqueue({
-      uuid,
+      uuid: uuid.value,
       comicId: comicId.value,
       chapter,
       comicTitle: info.value?.title || comicId.value,
@@ -334,7 +381,7 @@ async function batchDownloadAll() {
   let queued = 0
   for (const chapter of targets) {
     const { skipped } = await enqueue({
-      uuid,
+      uuid: uuid.value,
       comicId: comicId.value,
       chapter,
       comicTitle: info.value?.title || comicId.value,
@@ -385,8 +432,16 @@ function downloadLabel(chapter: ComicChapter): string {
 
 // ---- 在线阅读: 跳到独立阅读器页面 (沉浸式外壳, 缩放/章节/进度都在那边) ----
 function openReader(chapter: ComicChapter) {
+  saveSourceSession(uuid.value, {
+    detailOrigin: detailOrigin.value,
+    keyword: keyword.value,
+    page: page.value,
+    items: items.value,
+    paging: paging.value,
+    viewScrollTop: { ...viewScrollTop },
+  })
   void router.push({
-    path: `/read/comic/${encodeURIComponent(uuid)}/${encodeURIComponent(comicId.value)}/${encodeURIComponent(chapterRequestId(chapter))}`,
+    path: `/read/comic/${encodeURIComponent(uuid.value)}/${encodeURIComponent(comicId.value)}/${encodeURIComponent(chapterRequestId(chapter))}`,
     query: {
       title: info.value?.title || comicId.value,
       back: route.fullPath,
@@ -396,9 +451,9 @@ function openReader(chapter: ComicChapter) {
 </script>
 
 <template>
-  <div class="comic-source">
+  <div ref="sourceRoot" class="comic-source">
     <header class="toolbar">
-      <button class="btn btn-ghost back-btn" @click="router.push('/comics')">
+      <button class="btn btn-ghost back-btn" @click="leaveSource">
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>
         {{ t('nav.comics') }}
       </button>
@@ -411,7 +466,9 @@ function openReader(chapter: ComicChapter) {
         <input ref="searchInput" v-model="keyword" class="search" type="search" :placeholder="t('comics.searchOnline')" @keyup.enter="doSearch()" />
       </div>
       <button v-if="view !== 'detail'" class="btn btn-primary" :disabled="searching || !keyword.trim()" @click="doSearch()">{{ t('comics.search') }}</button>
-      <button v-if="view !== 'browse'" class="btn" @click="backToBrowse">{{ t('comics.backToBrowse') }}</button>
+      <button v-if="view !== 'browse'" class="btn" @click="goBack">
+        {{ view === 'detail' && detailOrigin === 'search' ? t('comics.backToSearch') : t('comics.backToBrowse') }}
+      </button>
       <button class="btn" @click="goSettings">{{ t('comics.pluginSettings') }}</button>
     </header>
 
@@ -425,8 +482,8 @@ function openReader(chapter: ComicChapter) {
       />
     </div>
 
-    <!-- 搜索结果 -->
-    <template v-if="plugin && view === 'search'">
+    <!-- 搜索结果: 用 v-show 保留列表 DOM 与图片, 从详情返回搜索时能直接恢复滚动位置 -->
+    <div v-if="plugin && (view === 'search' || items.length)" v-show="view === 'search'" class="search-panel">
       <h2 class="section-title">{{ t('comics.searchResults') }}</h2>
       <p v-if="searchError" class="error-text">{{ searchError }}</p>
       <p v-if="searching" class="hint loading-hint">{{ t('comics.searching') }}</p>
@@ -452,7 +509,7 @@ function openReader(chapter: ComicChapter) {
       <div v-if="paging && page < paging.pages" class="load-more">
         <button class="btn" :disabled="searching" @click="loadMore">{{ t('comics.loadMore') }}</button>
       </div>
-    </template>
+    </div>
 
     <!-- Breeze 风格详情: 封面 / 元信息 / 分组标签 / 章节 / 相关推荐; 不含点赞收藏按钮 -->
     <template v-if="plugin && view === 'detail'">
@@ -545,7 +602,7 @@ function openReader(chapter: ComicChapter) {
       <template v-if="recommend.length">
         <h2 class="section-title">{{ t('comics.detailRecommend') }}</h2>
         <div class="result-grid">
-          <button v-for="item in recommend" :key="item.id" type="button" class="result-card" @click="openDetail(item)">
+          <button v-for="item in recommend" :key="item.id" type="button" class="result-card" :data-cover-id="item.id" @click="openDetail(item)">
             <div class="result-cover">
               <img v-if="covers[item.id]" :src="covers[item.id]" alt="" loading="lazy" />
               <div v-else class="cover-placeholder" aria-hidden="true">
