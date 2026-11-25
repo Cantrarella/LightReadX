@@ -478,6 +478,14 @@ export class TauriStorage implements LibraryStorage {
     }
   }
 
+  evictCoverUrl(id: string) {
+    const url = this.coverUrls.get(id)
+    if (url) {
+      URL.revokeObjectURL(url)
+      this.coverUrls.delete(id)
+    }
+  }
+
   async listBooklists() {
     const rows = await this.db.select<Array<{
       id: string

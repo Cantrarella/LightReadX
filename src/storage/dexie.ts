@@ -161,6 +161,10 @@ export class DexieStorage implements LibraryStorage {
     }
   }
 
+  evictCoverUrl(id: string) {
+    this.forgetCoverUrl(id)
+  }
+
   async listBooklists() {
     return this.db.booklists.orderBy('createdAt').reverse().toArray()
   }

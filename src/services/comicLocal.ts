@@ -1,9 +1,8 @@
 /**
- * 本地漫画 (CBZ / CBR) 阅读加载: 从书库拿文件, 解包成图片页列表, 交给漫画阅读器渲染。
+ * 本地漫画 (CBZ / CBR) 阅读加载: 从书库拿文件, 按页按需解包成图片 object URL 交给漫画阅读器渲染。
  *
- * CBZ 用 fflate 直接解 zip; CBR 先用现有的 cbrToCbz (unrar wasm) 转成 CBZ 再解。
- * 与 foliate 的 makeComicBook 不同, 这里直接产出图片的 object URL, 供 <img> 使用,
- * 复用漫画阅读器那一套缩放 / 单页 / 长条 UI。
+ * CBZ 用 fflate 按条目过滤解压; CBR 先用现有的 cbrToCbz (unrar wasm) 转成 CBZ 再按页读取。
+ * 配合阅读器 LRU 回收策略，只保留当前页附近的少量图片在内存中。
  */
 import { unzipSync, type Unzipped } from 'fflate'
 import { getStorage } from '../storage'
@@ -20,6 +19,32 @@ export interface LocalComicPage {
 export interface LocalComic {
   title: string
   pages: LocalComicPage[]
+}
+
+export interface LocalComicArchive {
+  title: string
+  pageIds: string[]
+  /** 按需解压单页并返回 object URL（由调用方负责 revoke） */
+  readPageUrl(index: number): string
+  /** 释放压缩包字节缓冲区 */
+  close(): void
+}
+
+function scanZipImageNames(data: Uint8Array): string[] {
+  const names: string[] = []
+  try {
+    unzipSync(data, {
+      filter(file) {
+        if (IMAGE_RE.test(file.name)) names.push(file.name)
+        return false
+      },
+    })
+  } catch {
+    throw new Error(t('library.rarNoImages'))
+  }
+  names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+  if (!names.length) throw new Error(t('library.rarNoImages'))
+  return names
 }
 
 /** 从 zip 字节里挑出图片条目, 按文件名排序 (维持阅读顺序) */
@@ -53,6 +78,46 @@ function mimeFor(name: string): string {
     case 'jpg':
     case 'jpeg':
     default: return 'image/jpeg'
+  }
+}
+
+/** 打开本地漫画归档：仅扫描目录结构，阅读时按页按需解压 */
+export async function openLocalComicArchive(bookId: string): Promise<LocalComicArchive> {
+  const storage = await getStorage()
+  const book = await storage.getBook(bookId)
+  if (!book) throw new Error(t('library.bookMissing'))
+
+  let file: Blob
+  if (book.format === 'cbr') {
+    const cached = await storage.getComicCbz?.(bookId)
+    if (cached) file = cached
+    else file = await cbrToCbz(await storage.getBookFile(bookId))
+  } else {
+    file = await storage.getBookFile(bookId)
+  }
+
+  let data: Uint8Array | null = new Uint8Array(await file.arrayBuffer())
+  const pageIds = scanZipImageNames(data)
+
+  return {
+    title: book.title,
+    pageIds,
+    readPageUrl(index: number): string {
+      if (!data) throw new Error('Local comic archive closed')
+      const target = pageIds[index]
+      if (!target) throw new Error('Invalid comic page index')
+      const extracted = unzipSync(data, {
+        filter(entry) {
+          return entry.name === target
+        },
+      })
+      const bytes = extracted[target]
+      if (!bytes?.length) throw new Error('Empty comic page')
+      return URL.createObjectURL(new Blob([bytes], { type: mimeFor(target) }))
+    },
+    close() {
+      data = null
+    },
   }
 }
 

@@ -166,6 +166,8 @@ onBeforeUnmount(() => {
   clearTimeout(resizeTimer)
   resizeObserver?.disconnect()
   pageCache.clear()
+  doc?.close?.()
+  doc = null
 })
 </script>
 

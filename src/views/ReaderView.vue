@@ -3102,6 +3102,9 @@ onBeforeUnmount(() => {
   ambient.setPauseWhenHidden(null)
   view?.close?.()
   view?.remove()
+  offscreenDocs.clear()
+  listenTexts.clear()
+  secSizes = []
 })
 </script>
 

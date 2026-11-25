@@ -261,6 +261,22 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
     return out
   }
 
+  const activityWaiters = new Set<() => void>()
+  const wakeActivity = () => {
+    for (const wake of activityWaiters) wake()
+    activityWaiters.clear()
+  }
+  const waitActivity = (maxMs: number) => new Promise<void>(resolve => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const wake = () => {
+      if (timer) clearTimeout(timer)
+      activityWaiters.delete(wake)
+      resolve()
+    }
+    activityWaiters.add(wake)
+    timer = setTimeout(wake, Math.max(1, maxMs))
+  })
+
   const finish = (id: number, ok: boolean, value: unknown) => {
     if (disposed) return
     try {
@@ -268,6 +284,8 @@ export async function createComicPluginHost(options: HostOptions): Promise<Comic
       evaluate(`globalThis.__qjsFinish(${payload})`, 'finish')
     } catch (err) {
       options.log?.('[comic-plugin] 异步回调失败', err)
+    } finally {
+      wakeActivity()
     }
   }
 
@@ -414,7 +432,10 @@ globalThis.__calls = globalThis.__calls || {};
           if (jobs.error) unwrap(jobs, fnPath)
         })
         if (evalStr(`String(${slot}.done)`, 'done') === 'true') { done = true; break }
-        await new Promise(resolve => setTimeout(resolve, 3))
+        // 事件驱动唤醒（finish() 时立即触发），100ms 兜底检查，避免 3ms 空轮询空耗 CPU
+        const remain = deadline - performance.now()
+        if (remain <= 0) break
+        await waitActivity(Math.min(100, remain))
       }
       const errJson = evalStr(`${slot}.error`, 'error')
       if (errJson && errJson !== 'null') {

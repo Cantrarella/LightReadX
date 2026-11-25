@@ -271,10 +271,14 @@ export class PdfiumDoc {
     }
   }
 
-  /** 字符级文本模型 (按页缓存) */
+  /** 字符级文本模型 (按页 LRU 缓存，避免大 PDF 搜索/翻页后常驻过多几何数组) */
   text(pageIdx: number): TextModel {
     const cached = this.textCache.get(pageIdx)
-    if (cached) return cached
+    if (cached) {
+      this.textCache.delete(pageIdx)
+      this.textCache.set(pageIdx, cached)
+      return cached
+    }
     const empty: TextModel = { count: 0, codes: new Uint32Array(0), boxes: new Float32Array(0), sizes: new Float32Array(0), lines: [] }
     return this.guard(`text page ${pageIdx + 1}`, empty, () => this.readText(pageIdx))
   }
@@ -308,6 +312,10 @@ export class PdfiumDoc {
     m.FPDF_ClosePage(page)
     const model: TextModel = { count, codes, boxes, sizes, lines: buildLines(codes, boxes) }
     this.textCache.set(pageIdx, model)
+    if (this.textCache.size > 50) {
+      const oldest = this.textCache.keys().next().value
+      if (oldest !== undefined) this.textCache.delete(oldest)
+    }
     return model
   }
 

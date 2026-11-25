@@ -18,6 +18,7 @@ export interface ComicSourceSession {
   discoverHomeScrollTop?: number
 }
 
+const MAX_SESSIONS = 4
 const sessions = new Map<string, ComicSourceSession>()
 
 function createDefault(): ComicSourceSession {
@@ -32,7 +33,12 @@ function createDefault(): ComicSourceSession {
 
 /** 读取指定漫画源的会话快照 */
 export function getSourceSession(uuid: string): ComicSourceSession | undefined {
-  return sessions.get(uuid)
+  const existing = sessions.get(uuid)
+  if (existing) {
+    sessions.delete(uuid)
+    sessions.set(uuid, existing)
+  }
+  return existing
 }
 
 /** 增量保存指定漫画源的会话快照（跳转阅读器返回后复原列表与滚动位置） */
@@ -45,7 +51,13 @@ export function saveSourceSession(uuid: string, patch: Partial<ComicSourceSessio
       ? { ...prev.viewScrollTop, ...patch.viewScrollTop }
       : prev.viewScrollTop,
   }
+  sessions.delete(uuid)
   sessions.set(uuid, next)
+  while (sessions.size > MAX_SESSIONS) {
+    const oldest = sessions.keys().next().value
+    if (oldest !== undefined) sessions.delete(oldest)
+    else break
+  }
   return next
 }
 

@@ -15,8 +15,8 @@ import { isTauri } from './storage'
 import { startNativeDrop } from './services/nativeDrop'
 import { startExternalOpen } from './services/externalOpen'
 import { toast } from './services/toast'
-import { requestAutoSync, startAutoSync } from './services/sync'
-import { startTransferPolling, transferState } from './services/transfer'
+import { requestAutoSync, startAutoSync, syncConfigured } from './services/sync'
+import { deviceChannelsAvailable, startTransferPolling, transferState } from './services/transfer'
 import { activeCount, initDownloads } from './services/comicPlugin/downloadCenter'
 import {
   canInAppInstall,
@@ -68,6 +68,7 @@ router.afterEach((to, from) => {
 let stopNativeDrop: (() => void) | undefined
 let stopExternalOpen: (() => void) | undefined
 let stopSync: (() => void) | undefined
+let stopSyncWatch: (() => void) | undefined
 let stopTransfer: (() => void) | undefined
 let stopTransferWatch: (() => void) | undefined
 let stopUpdateChecks: (() => void) | undefined
@@ -149,10 +150,13 @@ onMounted(async () => {
     stopNativeDrop = startNativeDrop(router, error => toast(t('library.dropFailed', { msg: String(error) }), 'error', 6000))
     stopExternalOpen = await startExternalOpen(router)
   }
-  // 多端同步: 启动一次、切到后台、每 5 分钟 (未开启自动同步时引擎自己跳过)
-  stopSync = startAutoSync()
-  // 互传: 启动、获得焦点、可见期间定时收取 (未登录且未配置 WebDAV 时什么也不做); 设置里关闭互传时不收取
-  stopTransferWatch = watch(() => settings.features.transfer, on => {
+  // 多端同步: 仅在已配置远端且开启自动同步时启动后台轮询
+  stopSyncWatch = watch(() => settings.webdavSyncAuto && syncConfigured(), on => {
+    stopSync?.()
+    stopSync = on ? startAutoSync() : undefined
+  }, { immediate: true })
+  // 互传: 仅在开启互传且存在可用通道（已登录或已配置 WebDAV）时启动轮询
+  stopTransferWatch = watch(() => settings.features.transfer && deviceChannelsAvailable().length > 0, on => {
     stopTransfer?.()
     stopTransfer = on ? startTransferPolling(() => router.push('/transfer')) : undefined
   }, { immediate: true })
@@ -170,6 +174,7 @@ async function recoverFromLocalTtsCrash() {
 onBeforeUnmount(() => {
   stopNativeDrop?.()
   stopExternalOpen?.()
+  stopSyncWatch?.()
   stopSync?.()
   stopTransferWatch?.()
   stopTransfer?.()

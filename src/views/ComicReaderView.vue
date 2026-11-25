@@ -18,7 +18,7 @@ import { useReadingTimer } from '../composables/useReadingTimer'
 import { useAmbient } from '../services/ambient'
 import AmbientPanel from '../components/AmbientPanel.vue'
 import { setWindowFullscreen } from '../services/windowChrome'
-import { loadLocalComic } from '../services/comicLocal'
+import { openLocalComicArchive, type LocalComicArchive } from '../services/comicLocal'
 import { comicLocationOf, comicProgressOf, comicResumeIndex } from '../services/comicProgress'
 import {
   chapterRequestId, normalizeChapter, normalizeDetail, openPlugin,
@@ -115,6 +115,7 @@ const errors = reactive<Record<number, boolean>>({})
 const scrollEl = ref<HTMLElement>()
 
 let host: ComicPluginHost | null = null
+let localArchive: LocalComicArchive | null = null
 let observer: IntersectionObserver | null = null
 const inflight = new Set<number>()
 /** 最多同时留多少张解码后的图, 超了按离当前页的距离回收 */
@@ -271,8 +272,6 @@ function onStageClick(event: MouseEvent) {
 
 // ---- 取图 ----
 function evict(budget = MAX_CACHED) {
-  // 本地 CBZ/CBR 全量解压在内存且没有远程 host 重新拉图，不能驱逐已解码页
-  if (isLocal.value) return
   const keys = Object.keys(urls).map(Number)
   if (keys.length <= budget) return
   const current = pageIndex.value
@@ -286,11 +285,19 @@ function evict(budget = MAX_CACHED) {
 
 async function loadPage(index: number, force = false) {
   const page = pages.value[index]
-  if (!page || !host) return
+  if (!page) return
+  if (!isLocal.value && !host) return
+  if (isLocal.value && !localArchive) return
   if (inflight.has(index) || (!force && (urls[index] || errors[index]))) return
   if (force) { delete errors[index]; if (urls[index]) { URL.revokeObjectURL(urls[index]); delete urls[index] } }
   inflight.add(index)
   try {
+    if (isLocal.value) {
+      urls[index] = localArchive!.readPageUrl(index)
+      delete errors[index]
+      evict()
+      return
+    }
     // 先看本地缓存: 同一话重看不用再走一遍插件抓图
     const cached = await cacheGet(page.url)
     if (cached?.length) {
@@ -299,7 +306,7 @@ async function loadPage(index: number, force = false) {
       evict()
       return
     }
-    const bytes = await host.callBytes('fetchImageBytes', { url: page.url }, { timeoutMs: 60_000 })
+    const bytes = await host!.callBytes('fetchImageBytes', { url: page.url }, { timeoutMs: 60_000 })
     if (!bytes?.length) throw new Error('empty')
     urls[index] = bytesToObjectUrl(bytes, page.url)
     delete errors[index]
@@ -463,17 +470,19 @@ async function boot() {
   }
 }
 
-/** 本地漫画: 解包 CBZ/CBR, 把每张图直接塞进 urls 交给渲染 (不走插件) */
+/** 本地漫画: 仅扫描目录建立页表, 阅读时按页按需解压并配合 LRU 回收 (不走插件) */
 async function bootLocal() {
   try {
-    const local = await loadLocalComic(activeBookId.value)
-    comicTitle.value = local.title || comicTitle.value
-    chapterName.value = ''
-    // pages 只用于 total / 长度, 实际图片已在 urls 里
-    pages.value = local.pages.map((p, i) => ({ id: p.id, url: `local:${i}` }))
-    for (let i = 0; i < local.pages.length; i++) {
-      urls[i] = local.pages[i].url
+    localArchive?.close()
+    localArchive = await openLocalComicArchive(activeBookId.value)
+    if (unmounted) {
+      localArchive.close()
+      localArchive = null
+      return
     }
+    comicTitle.value = localArchive.title || comicTitle.value
+    chapterName.value = ''
+    pages.value = localArchive.pageIds.map((id, i) => ({ id, url: `local:${i}` }))
     if (!pages.value.length) throw new Error(t('comics.noPages'))
 
     // 续读: 优先 localStorage 里的精确页码 (历史进度都在), 没有就按书库进度折算 (清过缓存的兜底)
@@ -489,6 +498,8 @@ async function bootLocal() {
     if (mode.value === 'long') {
       setupObserver()
       scrollToPage(start)
+    } else {
+      preloadAround(start)
     }
     // 打开即算「最近阅读」: 先落一次库, 卡片不用等翻页才出现
     flushLibraryProgress()
@@ -654,6 +665,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', syncFullscreenState)
   ambient.stop()
   clearPages()
+  localArchive?.close()
+  localArchive = null
   host?.dispose()
   host = null
 })

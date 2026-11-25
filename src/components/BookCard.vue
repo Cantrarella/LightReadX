@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { BookMeta } from '../storage'
+import { useLibrary } from '../stores/library'
 import { formatLabelOf } from '../services/plainText'
 import { formatReadingTime } from '../composables/useReadingTimer'
 import { shortAuthor, shortTitle } from '../services/displayTitle'
@@ -142,7 +143,28 @@ function onContextMenu(e: Event) {
   e.preventDefault()
   if (!props.selectable) openMenu()
 }
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePointerDown, true))
+const cardEl = ref<HTMLElement>()
+let coverObserver: IntersectionObserver | null = null
+
+onMounted(() => {
+  if (!props.book.hasCover || props.coverUrl || typeof IntersectionObserver === 'undefined' || !cardEl.value) return
+  const library = useLibrary()
+  coverObserver = new IntersectionObserver(entries => {
+    if (!entries.some(e => e.isIntersecting)) return
+    coverObserver?.disconnect()
+    coverObserver = null
+    if (props.book.hasCover && !props.coverUrl) {
+      void library.ensureCover(props.book).catch(() => {})
+    }
+  }, { rootMargin: '300px' })
+  coverObserver.observe(cardEl.value)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onOutsidePointerDown, true)
+  coverObserver?.disconnect()
+  coverObserver = null
+})
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' || e.key === ' ') {
@@ -154,6 +176,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div
+    ref="cardEl"
     class="book-card"
     :class="{ selected: selectable && selected, selectable, compact, 'menu-open': menuOpen }"
     :title="tooltip"

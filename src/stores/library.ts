@@ -17,6 +17,40 @@ const resolveCover = createCoverResolver({
 /** 本次运行里各书最后一次保存的进度 (见 saveProgress / refresh) */
 const lastSavedProgress = new Map<string, { location: string; progress: number; lastReadAt: number }>()
 
+/** 书库封面并发与 LRU 缓存上限，避免大书库一次性并发读盘与无限驻留 objectURL */
+const MAX_COVER_CACHE = 180
+const MAX_COVER_CONCURRENCY = 4
+const INITIAL_COVER_PREFETCH = 24
+const coverOrder: string[] = []
+const coverInFlight = new Map<string, Promise<void>>()
+const coverQueue: Array<() => Promise<void>> = []
+let activeCoverWorkers = 0
+
+function runCoverQueue() {
+  while (activeCoverWorkers < MAX_COVER_CONCURRENCY && coverQueue.length) {
+    const job = coverQueue.shift()!
+    activeCoverWorkers++
+    void job().finally(() => {
+      activeCoverWorkers--
+      runCoverQueue()
+    })
+  }
+}
+
+function enqueueCoverJob(task: () => Promise<void>): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    coverQueue.push(async () => {
+      try {
+        await task()
+        resolve()
+      } catch (err) {
+        reject(err)
+      }
+    })
+    runCoverQueue()
+  })
+}
+
 export const useLibrary = defineStore('library', {
   state: () => ({
     books: [] as BookMeta[],
@@ -66,14 +100,50 @@ export const useLibrary = defineStore('library', {
       this.booklists = booklists
       this.booklistWanted = groupWanted(wanted)
       this.loaded = true
-      // 封面异步补齐; 本地封面损坏 (空文件 / 缺失 / 不是图片) 时从书籍文件重新生成, 期间显示文字封面
-      for (const book of this.books) {
+      // 仅预加载前 INITIAL_COVER_PREFETCH 本封面（最近打开的优先），其余在卡片进入视口时懒加载
+      const prefetch = [...this.books]
+        .sort((a, b) => (b.lastReadAt ?? b.addedAt) - (a.lastReadAt ?? a.addedAt))
+        .slice(0, INITIAL_COVER_PREFETCH)
+      for (const book of prefetch) {
         if (book.hasCover && !this.coverUrls[book.id]) {
-          resolveCover(book).then(url => {
-            if (url) this.coverUrls[book.id] = url
-          }).catch(e => console.warn('[cover]', book.id, e))
+          void this.ensureCover(book).catch(e => console.warn('[cover]', book.id, e))
         }
       }
+    },
+    async ensureCover(book: BookMeta) {
+      if (!book.hasCover) return
+      if (this.coverUrls[book.id]) {
+        const idx = coverOrder.indexOf(book.id)
+        if (idx !== -1) {
+          coverOrder.splice(idx, 1)
+          coverOrder.push(book.id)
+        }
+        return
+      }
+      const existing = coverInFlight.get(book.id)
+      if (existing) return existing
+      const pending = enqueueCoverJob(async () => {
+        const url = await resolveCover(book)
+        if (!url) return
+        this.coverUrls[book.id] = url
+        const idx = coverOrder.indexOf(book.id)
+        if (idx !== -1) coverOrder.splice(idx, 1)
+        coverOrder.push(book.id)
+        if (coverOrder.length > MAX_COVER_CACHE) {
+          const storage = await getStorage()
+          while (coverOrder.length > MAX_COVER_CACHE) {
+            const oldest = coverOrder.shift()
+            if (oldest) {
+              delete this.coverUrls[oldest]
+              storage.evictCoverUrl?.(oldest)
+            }
+          }
+        }
+      }).finally(() => {
+        coverInFlight.delete(book.id)
+      })
+      coverInFlight.set(book.id, pending)
+      return pending
     },
     async removeBook(id: string) {
       const storage = await getStorage()
@@ -84,6 +154,8 @@ export const useLibrary = defineStore('library', {
           this.booklistBookIds[booklistId].filter(bookId => bookId !== id)
       }
       delete this.coverUrls[id]
+      const idx = coverOrder.indexOf(id)
+      if (idx !== -1) coverOrder.splice(idx, 1)
     },
     async createBooklist(name: string) {
       const storage = await getStorage()

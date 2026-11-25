@@ -127,8 +127,8 @@ let pdm: PdfiumDoc | null = null
 let renderBytes: Uint8Array | null = null
 /** 页面栅格化 Worker; 起不来时为 null, 改在主线程用 renderBytes 画 */
 let pageRenderer: PdfRenderClient | null = null
-/** 原始文件供打印、另存为与属性信息复用，不受渲染引擎消费影响。 */
-let sourcePdfBlob: Blob | null = null
+/** 仅记录原始 PDF 字节大小用于属性信息展示；打印与另存为时再按需读取磁盘文件，避免常驻整份 Blob */
+let sourcePdfSize = 0
 const sourcePdfVersion = ref('')
 let mupdfDocPromise: Promise<any> | null = null
 let mupdfRenderFailed = false
@@ -972,7 +972,7 @@ const propertyRows = computed(() => {
   const value = (tag: string) => pdm?.meta(tag) || ''
   return [
     { label: t('reader.fileName'), value: meta.value?.fileName || t('reader.unknown') },
-    { label: t('reader.fileSize'), value: formatBytes(sourcePdfBlob?.size ?? 0) },
+    { label: t('reader.fileSize'), value: formatBytes(sourcePdfSize) },
     { label: t('reader.pdfVersion'), value: sourcePdfVersion.value || t('reader.unknown') },
     { label: t('reader.pageCount'), value: String(pageCount.value) },
     { label: t('reader.pageSize'), value: `${mmW.toFixed(1)} × ${mmH.toFixed(1)} mm · ${Math.round(first.w)} × ${Math.round(first.h)} pt` },
@@ -987,11 +987,19 @@ const propertyRows = computed(() => {
   ].filter(row => row.value)
 })
 
+async function loadSourcePdfBlob(): Promise<Blob | null> {
+  if (!bookId) return null
+  const storage = await getStorage()
+  const raw = await storage.getBookFile(bookId)
+  return raw.slice(0, raw.size, 'application/pdf')
+}
+
 async function printDocument() {
   moreMenu.value = false
-  if (!sourcePdfBlob) return
   try {
-    await printPdf(sourcePdfBlob)
+    const pdfBlob = await loadSourcePdfBlob()
+    if (!pdfBlob) return
+    await printPdf(pdfBlob)
     toast(t('reader.printOpened'), 'success')
   } catch {
     toast(t('reader.printFailed'), 'error')
@@ -1000,9 +1008,10 @@ async function printDocument() {
 
 async function saveDocumentAs() {
   moreMenu.value = false
-  if (!sourcePdfBlob) return
   try {
-    const saved = await savePdfAs(sourcePdfBlob, meta.value?.fileName || meta.value?.title || 'document.pdf')
+    const pdfBlob = await loadSourcePdfBlob()
+    if (!pdfBlob) return
+    const saved = await savePdfAs(pdfBlob, meta.value?.fileName || meta.value?.title || 'document.pdf')
     if (saved) toast(t('reader.savedAs'), 'success')
   } catch (error: any) {
     toast(t('reader.saveFailed', { msg: error?.message ?? error }), 'error', 5000)
@@ -3501,7 +3510,7 @@ onMounted(async () => {
     const storedAnnotations = await storage.listAnnotations(bookId)
     annotations.value = storedAnnotations.filter(a => decodeLoc(a.cfi))
     const blob = await storage.getBookFile(bookId)
-    sourcePdfBlob = blob.slice(0, blob.size, 'application/pdf')
+    sourcePdfSize = blob.size
     const fileData = await blob.arrayBuffer()
     sourcePdfVersion.value = new TextDecoder('latin1')
       .decode(fileData.slice(0, 16))
@@ -3612,7 +3621,7 @@ onBeforeUnmount(() => {
   pageRenderer?.close()
   pageRenderer = null
   renderBytes = null
-  sourcePdfBlob = null
+  sourcePdfSize = 0
 })
 </script>
 

@@ -147,6 +147,8 @@ export interface LibraryStorage {
   discardStaged?(staged: LocalFileRef): Promise<void>
   /** 返回可直接用于 <img src> 的 URL (Object URL), 由调用方缓存; 无封面或封面不是可显示的图片 (空文件等) 返回 undefined */
   getCoverUrl(id: string): Promise<string | undefined>
+  /** 从内存缓存中释放并 revoke 指定书的封面 Object URL（用于 LRU 淘汰，不删除磁盘/数据库封面） */
+  evictCoverUrl?(id: string): void
 
   listBooklists(): Promise<BooklistRec[]>
   /** opts.id / opts.createdAt: 同步时沿用其他设备的书单 id 与创建时间 */

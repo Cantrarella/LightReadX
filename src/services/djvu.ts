@@ -13,19 +13,26 @@ export interface DjvuDoc {
   pageCount: number
   /** 1-based; 返回解码后的 ImageData 与 DPI */
   renderPage(num: number): Promise<{ imageData: ImageData; dpi: number }>
+  /** 释放底层文档缓冲区 */
+  close?: () => void
 }
 
 export async function openDjvu(blob: Blob): Promise<DjvuDoc> {
   const DjVu = await getDjVu()
-  const doc = new DjVu.Document(await blob.arrayBuffer())
+  let doc: any = new DjVu.Document(await blob.arrayBuffer())
   const pageCount: number = doc.getPagesQuantity()
   return {
     pageCount,
     async renderPage(num: number) {
+      if (!doc) throw new Error('DjVu document closed')
       const page = await doc.getPage(num)
       const imageData: ImageData = page.getImageData()
       const dpi: number = page.getDpi?.() ?? 300
       return { imageData, dpi }
+    },
+    close() {
+      doc?.destroy?.()
+      doc = null
     },
   }
 }
