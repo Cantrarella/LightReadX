@@ -97,30 +97,3 @@ export async function setKeepScreenOn(on: boolean) {
     else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null }
   } catch { wakeLock = null }
 }
-
-/** 原生壳能否把音量键交给网页 (只有安卓 App, 且需要新版 MainActivity) */
-export function volumeKeysSupported(): boolean {
-  return typeof bridge()?.setVolumeKeys === 'function'
-}
-
-export type VolumeKey = 'prev' | 'next'
-
-/**
- * 音量键翻页: 传入处理函数时原生端拦截音量键 (上 = 上一页, 下 = 下一页) 并回调,
- * 传 null 时交还系统调音量。离开阅读页、听书播放、打开面板时都要传 null。
- */
-export function setVolumeKeyHandler(handler: ((key: VolumeKey) => void) | null) {
-  const w = window as unknown as { __lightreadVolumeKey?: (key: VolumeKey) => void }
-  if (handler) w.__lightreadVolumeKey = handler
-  else delete w.__lightreadVolumeKey
-  try { bridge()?.setVolumeKeys?.(!!handler) } catch { /* 旧原生壳 */ }
-}
-
-/**
- * 阅读页传 false: 系统选字菜单 (复制 / 全选 / 网页搜索…) 不再和划线工具条一起弹出;
- * 输入框获得焦点时、离开阅读页时传 true, 保留粘贴等系统菜单。只有安卓 / iOS App 生效.
- */
-export function setNativeSelectionMenu(on: boolean) {
-  iosShellQuiet('setSelectionMenu', { on })
-  try { bridge()?.setSelectionMenu?.(on) } catch { /* 旧原生壳 */ }
-}

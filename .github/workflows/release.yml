@@ -51,7 +51,7 @@ jobs:
       - run: npm ci
       - name: 验证书源、EPUB、听书、更新、书摘与平台边界回归
         run: |
-          npm run test:book-sources
+          npm run test:legado
           npm run test:epub-compat
           npm run test:tts
           npm run test:updater

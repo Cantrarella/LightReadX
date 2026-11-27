@@ -1,8 +1,8 @@
 import type { ReaderPrefs, PdfPrefs } from '../stores/settings'
 import { isPortraitView, portraitSpacing, type PortraitProbe } from './portraitLayout.ts'
 
-export const READER_LAYOUT_KEYS = ['fontSize', 'lineHeight', 'gap', 'flow', 'maxColumnCount', 'continuousScroll'] as const
-export const PDF_LAYOUT_KEYS = ['mode', 'fit', 'spreadMode'] as const
+const READER_LAYOUT_KEYS = ['fontSize', 'lineHeight', 'gap', 'flow', 'maxColumnCount', 'continuousScroll'] as const
+const PDF_LAYOUT_KEYS = ['mode', 'fit', 'spreadMode'] as const
 export type ReaderLayoutKey = typeof READER_LAYOUT_KEYS[number]
 export type PdfLayoutKey = typeof PDF_LAYOUT_KEYS[number]
 export interface LayoutOverrides {
