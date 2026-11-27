@@ -183,6 +183,91 @@ pub fn library_file_remove(app: tauri::AppHandle, root: String, rel: String) -> 
   }
 }
 
+/// 将书库内的源文件直接复制到用户指定的目标路径 (零 JS 内存拷贝, 支持任意盘符)
+#[tauri::command]
+pub async fn library_file_export<R: tauri::Runtime>(
+  app: tauri::AppHandle<R>,
+  root: String,
+  rel: String,
+  dest: String,
+) -> Result<(), String> {
+  let src = library_path(&app, root, rel)?;
+  let dest_path = std::path::PathBuf::from(&dest);
+  if dest_path.as_os_str().is_empty() {
+    return Err("file: 目标路径不能为空".into());
+  }
+  tauri::async_runtime::spawn_blocking(move || {
+    if src == dest_path
+      || matches!(
+        (std::fs::canonicalize(&src), std::fs::canonicalize(&dest_path)),
+        (Ok(a), Ok(b)) if a == b
+      )
+    {
+      return Ok(());
+    }
+    if let Some(parent) = dest_path.parent() {
+      if !parent.as_os_str().is_empty() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("file: {e}"))?;
+      }
+    }
+    std::fs::copy(&src, &dest_path).map_err(|e| format!("file: {e}"))?;
+    Ok(())
+  })
+  .await
+  .map_err(|e| format!("file: {e}"))?
+}
+
+/// 批量导出到指定目录: 若目标文件名已存在, 自动追加 ` (2)`、` (3)` 避免覆盖, 返回实际写入路径
+#[tauri::command]
+pub async fn library_file_export_to_dir<R: tauri::Runtime>(
+  app: tauri::AppHandle<R>,
+  root: String,
+  rel: String,
+  dir: String,
+  file_name: String,
+) -> Result<String, String> {
+  let src = library_path(&app, root, rel)?;
+  let dir_path = std::path::PathBuf::from(&dir);
+  if dir_path.as_os_str().is_empty() {
+    return Err("file: 目标文件夹不能为空".into());
+  }
+  let clean_name = Path::new(&file_name)
+    .file_name()
+    .and_then(|n| n.to_str())
+    .ok_or_else(|| "file: 文件名无效".to_string())?
+    .to_string();
+  tauri::async_runtime::spawn_blocking(move || {
+    std::fs::create_dir_all(&dir_path).map_err(|e| format!("file: {e}"))?;
+    let (stem, ext): (&str, Option<&str>) = if clean_name.to_ascii_lowercase().ends_with(".fb2.zip") && clean_name.len() > 8 {
+      (&clean_name[..clean_name.len() - 8], Some("fb2.zip"))
+    } else {
+      (
+        Path::new(&clean_name)
+          .file_stem()
+          .and_then(|s| s.to_str())
+          .unwrap_or("book"),
+        Path::new(&clean_name)
+          .extension()
+          .and_then(|e| e.to_str()),
+      )
+    };
+    let mut candidate = dir_path.join(&clean_name);
+    let mut idx = 2u32;
+    while candidate.exists() {
+      let next_name = match ext {
+        Some(e) if !e.is_empty() => format!("{stem} ({idx}).{e}"),
+        _ => format!("{stem} ({idx})"),
+      };
+      candidate = dir_path.join(next_name);
+      idx += 1;
+    }
+    std::fs::copy(&src, &candidate).map_err(|e| format!("file: {e}"))?;
+    Ok(candidate.to_string_lossy().into_owned())
+  })
+  .await
+  .map_err(|e| format!("file: {e}"))?
+}
+
 #[tauri::command]
 pub async fn library_file_write_chunk(
   app: tauri::AppHandle,

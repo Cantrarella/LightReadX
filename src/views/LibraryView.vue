@@ -14,6 +14,7 @@ import { nativeDragging, nativeDropQueue } from '../services/nativeDrop'
 import { importFromUrl } from '../services/urlImport'
 import { canScanLibraryLoose, importLibraryLooseFiles } from '../services/libraryScan'
 import { sendBookToDevices } from '../services/transfer'
+import { exportBooksToFolder, exportSingleBook } from '../services/bookExport'
 import { canConvertToEpub } from '../services/format'
 import { MQ, useMediaQuery } from '../composables/useMediaQuery'
 import { ACCEPT_READABLE } from '../services/plainText'
@@ -565,6 +566,32 @@ async function batchPin(pin: boolean) {
 /** 私密: 只留在本机, 不参与多端同步 (见 services/sync/engine.ts) */
 async function batchPrivate(on: boolean) {
   await setPrivate([...selectedIds.value], on)
+}
+
+async function exportBook(book: BookMeta) {
+  try {
+    const ok = await exportSingleBook(book)
+    if (ok) toast(t('library.exportDone'), 'success')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.exportFailed', { msg }), 'error', 6000)
+  }
+}
+
+async function batchExport() {
+  if (!selectedBooks.value.length) return
+  try {
+    const res = await exportBooksToFolder(selectedBooks.value)
+    if (!res) return
+    if (res.failed) {
+      toast(t('library.batchExportPartial', { exported: res.exported, failed: res.failed, msg: res.firstError ?? '' }), 'error', 7000)
+    } else {
+      toast(t('library.batchExportDone', { count: res.exported }), 'success')
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.exportFailed', { msg }), 'error', 6000)
+  }
 }
 async function setPrivate(ids: string[], on: boolean) {
   const storage = await (await import('../storage')).getStorage()
@@ -1292,7 +1319,7 @@ async function batchClearTags() {
         @toggle-select="toggleSelect(book.id)"
         @toggle-pin="togglePin(book)"
         @add-to-booklist="openBooklistPicker([book.id])"
-        @upload="uploadBooks([book.id])"
+        @export="exportBook(book)"
         @convert="convertBooks([book.id])"
         @send="sendBookToDevices(book.id)"
         @toggle-private="setPrivate([book.id], !book.noSync)"
@@ -1331,6 +1358,7 @@ async function batchClearTags() {
       <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPin(!allSelectedPinned)">{{ allSelectedPinned ? t('library.unpin') : t('library.pin') }}</button>
       <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPrivate(!allSelectedPrivate)">{{ allSelectedPrivate ? t('library.unsetPrivate') : t('library.setPrivate') }}</button>
       <button class="btn btn-sm" :disabled="!selectedIds.size" @click="showTagModal = true">{{ t('library.setTags') }}</button>
+      <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchExport">{{ t('library.batchExport') }}</button>
       <button class="btn btn-sm btn-danger" :disabled="!selectedIds.size" @click="batchDelete">{{ t('common.delete') }}</button>
       <button class="btn btn-sm" @click="toggleManage">{{ t('common.done') }}</button>
     </div>

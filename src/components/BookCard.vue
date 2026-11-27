@@ -36,14 +36,12 @@ const emit = defineEmits<{
   toggleSelect: []
   togglePin: []
   addToBooklist: []
-  upload: []
+  export: []
   convert: []
   /** 发送到其他设备 (互传) */
   send: []
   /** compact: 点「⋯」 */
   menu: []
-  /** 移到论文 / 藏书 */
-  moveKind: []
   /** 设为 / 取消私密 */
   togglePrivate: []
   /** compact: 长按封面 */
@@ -122,7 +120,7 @@ function openMenu() {
   // 靠近窗口下沿的书: 菜单会伸出可视区, 把页面滚到整个菜单可见
   void nextTick(() => actionsEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
 }
-type MenuEvent = 'remove' | 'togglePin' | 'addToBooklist' | 'upload' | 'convert' | 'send' | 'moveKind' | 'togglePrivate'
+type MenuEvent = 'remove' | 'togglePin' | 'addToBooklist' | 'export' | 'convert' | 'send' | 'togglePrivate'
 function menuAction(event: MenuEvent) {
   closeMenu()
   ;(emit as unknown as (e: MenuEvent) => void)(event)
@@ -276,11 +274,11 @@ function onKeydown(e: KeyboardEvent) {
       <button
         type="button"
         role="menuitem"
-        class="action upload"
-        :title="t('library.uploadToCloud')"
-        :aria-label="t('library.uploadToCloud')"
-        @click="menuAction('upload')"
-      >{{ t('library.uploadToCloud') }}</button>
+        class="action export"
+        :title="t('book.exportFile')"
+        :aria-label="t('book.exportFile')"
+        @click="menuAction('export')"
+      >{{ t('book.exportFile') }}</button>
       <button
         v-if="convertible"
         type="button"
@@ -291,9 +289,6 @@ function onKeydown(e: KeyboardEvent) {
         :disabled="converting"
         @click="menuAction('convert')"
       >{{ t('book.convertToEpub') }}</button>
-      <button type="button" role="menuitem" class="action move-kind" @click="menuAction('moveKind')">
-        {{ book.kind === 'paper' ? t('library.moveToBooks') : t('library.moveToPapers') }}
-      </button>
       <button type="button" role="menuitem" class="action private" @click="menuAction('togglePrivate')">
         {{ book.noSync ? t('library.unsetPrivate') : t('library.setPrivate') }}
       </button>

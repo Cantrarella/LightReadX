@@ -373,7 +373,7 @@ async function main() {
       } else {
         const [cover, box] = await Promise.all([c.locator('.cover').boundingBox(), btn.boundingBox()])
         assert.ok(box.y + box.height <= cover.y + cover.height && box.x >= cover.x, 'convert button inside the cover')
-        for (const sel of ['.action.remove', '.action.upload']) {
+        for (const sel of ['.action.remove', '.action.export']) {
           const b = await c.locator(sel).boundingBox()
           assert.ok(b.y + b.height <= cover.y + cover.height + 0.5, `${sel} not clipped`)
         }

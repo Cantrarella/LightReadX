@@ -27,6 +27,7 @@ import AppModal from '../components/AppModal.vue'
 import AppSelect from '../components/AppSelect.vue'
 import { vAutofocus } from '../directives/autofocus'
 import { sendBookToDevices } from '../services/transfer'
+import { exportBooksToFolder, exportSingleBook } from '../services/bookExport'
 
 const router = useRouter()
 const library = useLibrary()
@@ -253,6 +254,33 @@ async function setPrivate(ids: string[], on: boolean) {
 
 async function batchPrivate(on: boolean) {
   await setPrivate([...selectedIds.value], on)
+}
+
+async function exportBook(book: BookMeta) {
+  try {
+    const ok = await exportSingleBook(book)
+    if (ok) toast(t('library.exportDone'), 'success')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.exportFailed', { msg }), 'error', 6000)
+  }
+}
+
+async function batchExport() {
+  const targets = selectedComics.value
+  if (!targets.length) return
+  try {
+    const res = await exportBooksToFolder(targets)
+    if (!res) return
+    if (res.failed) {
+      toast(t('library.batchExportPartial', { exported: res.exported, failed: res.failed, msg: res.firstError ?? '' }), 'error', 7000)
+    } else {
+      toast(t('library.batchExportDone', { count: res.exported }), 'success')
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.exportFailed', { msg }), 'error', 6000)
+  }
 }
 
 async function batchTag() {
@@ -557,6 +585,7 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
           @long-press="onLongPress(book)"
           @toggle-select="toggleSelect(book.id)"
           @toggle-pin="togglePin(book)"
+          @export="exportBook(book)"
           @send="sendBookToDevices(book.id)"
           @toggle-private="setPrivate([book.id], !book.noSync)"
         />
@@ -581,6 +610,7 @@ async function updatePlugin(plugin: InstalledComicPlugin) {
         <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPin(!allSelectedPinned)">{{ allSelectedPinned ? t('library.unpin') : t('library.pin') }}</button>
         <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchPrivate(!allSelectedPrivate)">{{ allSelectedPrivate ? t('library.unsetPrivate') : t('library.setPrivate') }}</button>
         <button class="btn btn-sm" :disabled="!selectedIds.size" @click="showTagModal = true">{{ t('library.setTags') }}</button>
+        <button class="btn btn-sm" :disabled="!selectedIds.size" @click="batchExport">{{ t('library.batchExport') }}</button>
         <button class="btn btn-sm btn-danger" :disabled="!selectedIds.size" @click="batchDelete">{{ t('common.delete') }}</button>
         <button class="btn btn-sm" @click="toggleManage">{{ t('common.done') }}</button>
       </div>

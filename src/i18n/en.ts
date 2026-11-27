@@ -422,6 +422,15 @@ export default {
   'book.readTime': 'Read {time}',
   'book.removeFromLibrary': "Delete from library",
   'book.convertToEpub': 'Convert to EPUB',
+  'book.exportFile': 'Export file',
+  'library.batchExport': 'Export',
+  'library.exportDone': 'Exported',
+  'library.batchExportDone': 'Exported {count} files',
+  'library.batchExportPartial': 'Exported {exported}, failed {failed} ({msg})',
+  'library.exportFailed': 'Export failed: {msg}',
+  'downloads.exportFormat': 'Export format',
+  'downloads.exportSelectedAs': 'Export selected as {format}',
+  'downloads.exportSelectedCountAs': 'Export {count} as {format}',
 
   // ---- 书单 ----
   'booklist.bookCount': '{n} books',

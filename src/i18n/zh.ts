@@ -422,6 +422,15 @@ export default {
   'book.readTime': '已读 {time}',
   'book.removeFromLibrary': '从藏书中删除',
   'book.convertToEpub': '转换为 EPUB',
+  'book.exportFile': '导出文件',
+  'library.batchExport': '导出',
+  'library.exportDone': '已导出',
+  'library.batchExportDone': '已导出 {count} 个文件',
+  'library.batchExportPartial': '已导出 {exported} 个，失败 {failed} 个（{msg}）',
+  'library.exportFailed': '导出失败：{msg}',
+  'downloads.exportFormat': '导出文件类型',
+  'downloads.exportSelectedAs': '导出选中为 {format}',
+  'downloads.exportSelectedCountAs': '导出选中为 {format}（{count}）',
 
   // ---- 书单 ----
   'booklist.bookCount': '{n} 本',

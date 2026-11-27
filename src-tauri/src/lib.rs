@@ -230,6 +230,8 @@ pub fn run() {
       library_files::library_file_size,
       library_files::library_file_remove_derived,
       library_files::library_file_write_chunk,
+      library_files::library_file_export,
+      library_files::library_file_export_to_dir,
       library_files::library_migrate,
       backup_zip::library_files_describe,
       backup_zip::backup_write_zip,

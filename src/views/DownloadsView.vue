@@ -3,10 +3,12 @@
  * 下载页: 漫画章节下载的全局任务列表。
  * 进行中看进度, 失败/中断能重试, 完成的直接跳本地阅读器。
  */
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { t } from '../i18n'
 import { useLibrary } from '../stores/library'
+import AppSelect from '../components/AppSelect.vue'
+import { exportBooksToFolder } from '../services/bookExport'
 import { readerPath } from '../services/readerRoute'
 import { toast } from '../services/toast'
 import { askConfirm, deleteConfirmOptions } from '../services/confirm'
@@ -123,22 +125,62 @@ async function exportSingle(task: DownloadTask) {
   }
 }
 
+const exportFormat = ref<'cbz' | 'pdf'>('cbz')
+const batchExporting = ref(false)
+
 async function exportSelected() {
+  if (batchExporting.value) return
   const ids = selectedBookIds()
   if (!ids.length) { toast(t('downloads.noSelection'), 'info'); return }
-  // 逐本导出, 每本走一次系统「另存为」对话框
-  for (const task of exportableDone.value) {
-    if (!selected.has(task.id) || !task.bookId) continue
-    exporting.add(task.id)
-    try {
-      const result = await exportBookToPdf(task.bookId, () => { /* 批量进度逐本提示 */ })
-      if (!result.ok && result.error !== '已取消') toast(`${t('downloads.exportFailed')}: ${result.error}`, 'error')
-    } finally {
-      exporting.delete(task.id)
+  batchExporting.value = true
+  try {
+    if (exportFormat.value === 'cbz') {
+      const seenBookIds = new Set<string>()
+      const books = exportableDone.value
+        .filter(task => selected.has(task.id) && task.bookId)
+        .map(task => library.books.find(b => matchesDownloadedBook(task, b)))
+        .filter((b): b is NonNullable<typeof b> => {
+          if (!b || seenBookIds.has(b.id)) return false
+          seenBookIds.add(b.id)
+          return true
+        })
+      if (!books.length) {
+        toast(t('downloads.fileMissing'), 'info')
+        return
+      }
+      const res = await exportBooksToFolder(books)
+      if (!res) return
+      if (res.failed) {
+        toast(t('library.batchExportPartial', { exported: res.exported, failed: res.failed, msg: res.firstError ?? '' }), 'error', 7000)
+      } else {
+        selected.clear()
+        toast(t('library.batchExportDone', { count: res.exported }), 'success')
+      }
+      return
     }
+    // PDF: 逐本导出, 每本走一次系统「另存为」对话框
+    let okCount = 0
+    for (const task of exportableDone.value) {
+      if (!selected.has(task.id) || !task.bookId) continue
+      exporting.add(task.id)
+      try {
+        const result = await exportBookToPdf(task.bookId, () => { /* 批量进度逐本提示 */ })
+        if (result.ok) okCount++
+        else if (result.error !== '已取消') toast(`${t('downloads.exportFailed')}: ${result.error}`, 'error')
+      } finally {
+        exporting.delete(task.id)
+      }
+    }
+    if (okCount > 0) {
+      selected.clear()
+      toast(t('downloads.exportDone'), 'success')
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    toast(t('library.exportFailed', { msg }), 'error', 6000)
+  } finally {
+    batchExporting.value = false
   }
-  selected.clear()
-  toast(t('downloads.exportDone'), 'success')
 }
 
 async function openFolder(task: DownloadTask) {
@@ -225,8 +267,14 @@ async function openFolder(task: DownloadTask) {
         <h2 class="group-title">{{ t('downloads.groupDone') }} <span class="badge">{{ doneList.length }}</span></h2>
         <div class="group-actions">
           <button v-if="exportableDone.length" class="btn btn-ghost" @click="toggleSelectAll">{{ t('downloads.selectAll') }}</button>
-          <button v-if="exportableDone.length" class="btn btn-primary" :disabled="!selectedBookIds().length" @click="exportSelected">
-            {{ selectedBookIds().length ? t('downloads.exportSelectedCount', { count: selectedBookIds().length }) : t('downloads.exportSelected') }}
+          <AppSelect v-if="exportableDone.length" v-model="exportFormat" class="export-format-select" :aria-label="t('downloads.exportFormat')">
+            <option value="cbz">CBZ</option>
+            <option value="pdf">PDF</option>
+          </AppSelect>
+          <button v-if="exportableDone.length" class="btn btn-primary" :disabled="!selectedBookIds().length || batchExporting" @click="exportSelected">
+            {{ selectedBookIds().length
+              ? t('downloads.exportSelectedCountAs', { format: exportFormat.toUpperCase(), count: selectedBookIds().length })
+              : t('downloads.exportSelectedAs', { format: exportFormat.toUpperCase() }) }}
           </button>
         </div>
       </div>
@@ -288,8 +336,9 @@ async function openFolder(task: DownloadTask) {
 
 .group { margin-bottom: 26px; }
 .group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
-.group-actions { display: flex; gap: 8px; flex: none; }
+.group-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .group-actions .btn { padding: 0 12px; font-size: 13px; }
+.export-format-select { width: auto; height: var(--control-h); min-height: 0; padding: 0 10px; border-radius: var(--radius-sm); }
 .group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); margin: 0; }
 .badge {
   font-size: 11px; font-weight: 600; color: var(--text-3);
