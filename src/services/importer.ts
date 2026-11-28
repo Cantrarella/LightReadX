@@ -4,6 +4,7 @@ import { detectFormat, isFoliateNative, isTextLike } from './format'
 import { detectReadableFormat, looksLikeText } from './plainText'
 import { convertToEpub } from './textToEpub'
 import { makeFoliateBook } from './foliateBook'
+import { ComicImportError, extractComicMeta } from './comicMeta'
 import { isTauri } from '../storage/types'
 
 const isMobileUa = () => typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -84,10 +85,14 @@ export async function regenerateCover(book: BookMeta): Promise<Blob | undefined>
     const m = await storage.getEpubMeta(book.id)
     if (m) return m.cover
   }
+  if (book.format === 'cbz') {
+    const file = new File([await storage.getBookFile(book.id)], book.fileName)
+    return (await extractComicMeta(file, { allowZipComment: false })).cover
+  }
   if (book.format === 'cbr') {
     const cbz = (await storage.getComicCbz?.(book.id))
       ?? await (await import('./comic')).cbrToCbz(new File([await storage.getBookFile(book.id)], book.fileName))
-    return (await extractFoliateMeta(new File([cbz], 'cover.cbz'))).cover
+    return (await extractComicMeta(new File([cbz], 'cover.cbz'), { allowZipComment: false })).cover
   }
   if (book.format !== 'pdf' && book.format !== 'djvu' && !isFoliateNative(book.format)) return undefined
   const file = new File([await storage.getBookFile(book.id)], book.fileName)
@@ -127,8 +132,9 @@ export async function importFile(
   if (!format) return { ok: false, fileName: file.name, error: t('library.importUnsupported') }
 
   const baseName = file.name.replace(/\.[^.]+$/, '')
+  const fallbackComicTitle = baseName.trim() || baseName
   const meta: NewBookMeta = {
-    title: baseName,
+    title: format === 'cbz' || format === 'cbr' ? fallbackComicTitle : baseName,
     author: '',
     format,
     fileName: file.name,
@@ -144,7 +150,11 @@ export async function importFile(
   const nativeEpub = format === 'epub' && !!storage.getEpubMeta && !!storage.setCover && isTauri() && !isMobileUa()
 
   try {
-    if (isFoliateNative(format) && !nativeEpub) {
+    if (format === 'cbz') {
+      const m = await extractComicMeta(file, { allowZipComment: true })
+      meta.title = m.title || fallbackComicTitle
+      cover = m.cover
+    } else if (isFoliateNative(format) && !nativeEpub) {
       const m = await extractFoliateMeta(file)
       if (m.title) meta.title = m.title
       meta.author = m.author
@@ -157,11 +167,11 @@ export async function importFile(
       meta.author = m.author
       cover = m.cover
     } else if (format === 'cbr' && !nativeCbr) {
-      // 转成 CBZ 后走 foliate 漫画解析取封面
+      // 转成 CBZ 后提取包内 ComicInfo.xml 标题与封面
       const { cbrToCbz } = await import('./comic')
       const cbz = await cbrToCbz(file)
-      const m = await extractFoliateMeta(new File([cbz], baseName + '.cbz'))
-      if (m.title) meta.title = m.title
+      const m = await extractComicMeta(new File([cbz], baseName + '.cbz'), { allowZipComment: false })
+      meta.title = m.title || fallbackComicTitle
       cover = m.cover
     } else if (format === 'djvu') {
       const { djvuCover } = await import('./djvu')
@@ -174,10 +184,18 @@ export async function importFile(
   } catch (e: any) {
     // 底层报错 (如 Cannot read properties of null) 对读者没用, 原文留在控制台
     console.warn('[import]', file.name, e)
-    return { ok: false, fileName: file.name, error: t('library.importParseFailed') }
+    return {
+      ok: false,
+      fileName: file.name,
+      error: e instanceof ComicImportError ? e.message : t('library.importParseFailed'),
+    }
   }
 
-  if (overrides?.title) meta.title = overrides.title
+  if (overrides?.title?.trim()) {
+    meta.title = (format === 'cbz' || format === 'cbr') ? overrides.title.trim() : overrides.title
+  } else if (overrides?.title) {
+    meta.title = overrides.title
+  }
   if (overrides?.author) meta.author = overrides.author
   if (overrides?.description) meta.description = overrides.description
   meta.kind = overrides?.kind ?? 'book'
@@ -205,14 +223,19 @@ export async function importFile(
     try {
       const cbz = (await storage.getComicCbz!(bookId))
         ?? await (await import('./comic')).cbrToCbz(file)
-      const m = await extractFoliateMeta(new File([cbz], baseName + '.cbz'))
-      if (m.title && !overrides?.title) await storage.updateBook(bookId, { title: m.title })
+      const m = await extractComicMeta(new File([cbz], baseName + '.cbz'), { allowZipComment: false })
+      const nextTitle = overrides?.title?.trim() || m.title || fallbackComicTitle
+      if (nextTitle !== meta.title) await storage.updateBook(bookId, { title: nextTitle })
       if (m.cover) await storage.setCover!(bookId, m.cover)
     } catch (e) {
       // 原生与 wasm 都打不开 (加密 / 无图片): 撤回入库, 与原来一样报解析失败
       console.warn('[import]', file.name, e)
       await storage.deleteBook(bookId).catch(() => { /* 尽力撤回 */ })
-      return { ok: false, fileName: file.name, error: t('library.importParseFailed') }
+      return {
+        ok: false,
+        fileName: file.name,
+        error: e instanceof ComicImportError ? e.message : t('library.importParseFailed'),
+      }
     }
   }
   return { ok: true, fileName: file.name, bookId }

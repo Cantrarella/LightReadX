@@ -117,7 +117,9 @@ const scrollEl = ref<HTMLElement>()
 let host: ComicPluginHost | null = null
 let localArchive: LocalComicArchive | null = null
 let observer: IntersectionObserver | null = null
-const inflight = new Set<number>()
+let pageEpoch = 0
+let nextPageRequestId = 0
+const inflight = new Map<number, number>()
 /** 最多同时留多少张解码后的图, 超了按离当前页的距离回收 */
 const MAX_CACHED = 14
 
@@ -286,36 +288,57 @@ function evict(budget = MAX_CACHED) {
 async function loadPage(index: number, force = false) {
   const page = pages.value[index]
   if (!page) return
-  if (!isLocal.value && !host) return
-  if (isLocal.value && !localArchive) return
+  const localMode = isLocal.value
+  const archive = localMode ? localArchive : null
+  const activeHost = localMode ? null : host
+  if (!localMode && !activeHost) return
+  if (localMode && !archive) return
   if (inflight.has(index) || (!force && (urls[index] || errors[index]))) return
   if (force) { delete errors[index]; if (urls[index]) { URL.revokeObjectURL(urls[index]); delete urls[index] } }
-  inflight.add(index)
+
+  const epoch = pageEpoch
+  const requestId = ++nextPageRequestId
+  const isRequestActive = () =>
+    !unmounted
+    && pageEpoch === epoch
+    && inflight.get(index) === requestId
+    && (!localMode || (archive !== null && localArchive === archive))
+
+  inflight.set(index, requestId)
   try {
-    if (isLocal.value) {
-      urls[index] = localArchive!.readPageUrl(index)
+    if (localMode) {
+      const url = await archive!.readPageUrl(index)
+      if (!isRequestActive()) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      urls[index] = url
       delete errors[index]
       evict()
       return
     }
     // 先看本地缓存: 同一话重看不用再走一遍插件抓图
     const cached = await cacheGet(page.url)
+    if (!isRequestActive()) return
     if (cached?.length) {
       urls[index] = bytesToObjectUrl(cached, page.url)
       delete errors[index]
       evict()
       return
     }
-    const bytes = await host!.callBytes('fetchImageBytes', { url: page.url }, { timeoutMs: 60_000 })
+    const bytes = await activeHost!.callBytes('fetchImageBytes', { url: page.url }, { timeoutMs: 60_000 })
+    if (!isRequestActive()) return
     if (!bytes?.length) throw new Error('empty')
     urls[index] = bytesToObjectUrl(bytes, page.url)
     delete errors[index]
     void cachePut(page.url, bytes)
     evict()
   } catch {
-    errors[index] = true
+    if (isRequestActive()) errors[index] = true
   } finally {
-    inflight.delete(index)
+    if (inflight.get(index) === requestId) {
+      inflight.delete(index)
+    }
   }
 }
 
@@ -351,6 +374,7 @@ function setupObserver() {
 }
 
 function clearPages() {
+  pageEpoch++
   observer?.disconnect()
   observer = null
   for (const url of Object.values(urls)) URL.revokeObjectURL(url)

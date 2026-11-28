@@ -233,3 +233,160 @@ test('本地 cbz: 阅读时长计入今日统计', async t => {
     await server.close()
   }
 })
+
+test('本地 cbz: 退出阅读器后尚在解包的图片应撤销 Object URL 且旧请求不污染后续阅读', async t => {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'lightread-comic-leak-'))
+  t.after(() => rm(cacheDir, { recursive: true, force: true, maxRetries: 3 }))
+  const server = await createServer({
+    configLoader: 'runner',
+    cacheDir,
+    server: { host: '127.0.0.1', port: 0, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: ['dexie'] },
+  })
+  try {
+    await server.listen(0)
+    const base = 'http://127.0.0.1:' + server.httpServer.address().port
+    const browser = await chromium.launch()
+    try {
+      const page = await browser.newPage({ viewport: { width: 900, height: 750 }, locale: 'zh-CN' })
+      page.setDefaultTimeout(8000)
+      const errors = []
+      page.on('pageerror', err => errors.push(err.message))
+
+      // 仅在测试桥接中对 comicLocal.ts 的 openLocalComicArchive 增加可控延迟闸门
+      await page.route('**/src/services/comicLocal.ts*', async route => {
+        const res = await route.fetch()
+        let body = await res.text()
+        body = body.replace(
+          'export async function openLocalComicArchive(',
+          'async function __origOpenLocalComicArchive(',
+        ) + '\nexport async function openLocalComicArchive(bookId) { const a = await __origOpenLocalComicArchive(bookId); return window.__wrapLocalArchive ? window.__wrapLocalArchive(a) : a; }\n'
+        await route.fulfill({ response: res, body })
+      })
+
+      await page.goto(base + '/#/comics', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await page.waitForFunction(() => document.querySelector('#app')?.__vue_app__)
+
+      await page.evaluate(async ({ zipBase64 }) => {
+        const { getStorage } = await import('/src/storage/index.ts')
+        const { useLibrary } = await import('/src/stores/library.ts')
+        const zip = Uint8Array.from(atob(zipBase64), c => c.charCodeAt(0))
+        await (await getStorage()).addBook(
+          { title: '退出释放URL测试', author: '测试', format: 'cbz', fileName: 'leak-check.cbz', tags: [], addedAt: Date.now() },
+          new Blob([zip], { type: 'application/zip' }),
+        )
+        await useLibrary().refresh()
+
+        window.__holdMode = 'hold'
+        window.__heldRequests = []
+        window.__capturedUrls = []
+        window.__wrapLocalArchive = archive => {
+          const origRead = archive.readPageUrl.bind(archive)
+          return {
+            ...archive,
+            readPageUrl(index) {
+              if (window.__holdMode === 'off') return origRead(index)
+              const unpackPromise = window.__holdMode === 'reject' ? null : origRead(index)
+              return new Promise((resolve, reject) => {
+                window.__heldRequests.push({
+                  index,
+                  release: async () => {
+                    if (!unpackPromise) {
+                      reject(new Error('stale unpack failure'))
+                      return
+                    }
+                    const url = await unpackPromise
+                    window.__capturedUrls.push(url)
+                    resolve(url)
+                  },
+                })
+              })
+            },
+          }
+        }
+      }, { zipBase64: makeCbz(PAGES) })
+
+      // 1. 打开漫画，等待前两页读取请求均已发起，再通过客户端返回按钮退出到漫画列表（同窗口不刷新）
+      await page.locator('.book-card', { hasText: '退出释放URL测试' }).first().click()
+      await page.waitForFunction(() => (window.__heldRequests?.length ?? 0) >= 2)
+      await page.locator('.bar.top .icon-btn').first().click()
+      await page.waitForFunction(() => location.hash.startsWith('#/comics'))
+
+      // 2. 退出后放行两个正常解包结果，验证两条 Object URL 均已被 revoke 且无法再 fetch
+      const fetchStatuses = await page.evaluate(async () => {
+        const reqs = window.__heldRequests.splice(0)
+        for (const r of reqs) await r.release()
+        await new Promise(r => setTimeout(r, 50))
+        const results = []
+        for (const url of window.__capturedUrls) {
+          try {
+            const res = await fetch(url)
+            results.push({ url, alive: res.ok })
+          } catch {
+            results.push({ url, alive: false })
+          }
+        }
+        return results
+      })
+      assert.equal(fetchStatuses.length, 2, '应捕获到 2 个退出后才返回的 Object URL')
+      assert.ok(fetchStatuses.every(r => r.alive === false), `退出后放行的 Object URL 应全部被撤销: ${JSON.stringify(fetchStatuses)}`)
+
+      // 3. 补测重开后再放行旧请求（旧成功与旧失败），确认均不影响当前图片及翻页
+      await page.evaluate(() => {
+        window.__holdMode = 'hold'
+        window.__heldRequests = []
+        window.__capturedUrls = []
+      })
+      await page.locator('.book-card', { hasText: '退出释放URL测试' }).first().click()
+      await page.waitForFunction(() => (window.__heldRequests?.length ?? 0) >= 1)
+      await page.locator('.bar.top .icon-btn').first().click()
+      await page.waitForFunction(() => location.hash.startsWith('#/comics'))
+
+      await page.evaluate(() => {
+        window.__staleToRelease = window.__heldRequests.splice(0)
+        window.__holdMode = 'reject'
+      })
+      await page.locator('.book-card', { hasText: '退出释放URL测试' }).first().click()
+      await page.waitForFunction(() => (window.__heldRequests?.length ?? 0) >= 1)
+      await page.locator('.bar.top .icon-btn').first().click()
+      await page.waitForFunction(() => location.hash.startsWith('#/comics'))
+
+      await page.evaluate(() => {
+        window.__staleRejects = window.__heldRequests.splice(0)
+        window.__holdMode = 'off'
+      })
+
+      // 重新打开漫画，待新阅读器加载出第 1 页后，再放行之前挂起的旧成功与旧失败请求
+      await page.locator('.book-card', { hasText: '退出释放URL测试' }).first().click()
+      const img1 = page.locator('.comic-reader img[alt="1"]').first()
+      await img1.waitFor({ state: 'attached' })
+      assert.equal(await img1.evaluate(el => el.complete && el.naturalWidth > 0 ? el.naturalWidth : new Promise(r => el.onload = () => r(el.naturalWidth))), 1)
+
+      const staleResults = await page.evaluate(async () => {
+        for (const r of window.__staleToRelease) await r.release()
+        window.__holdMode = 'reject'
+        for (const r of window.__staleRejects) await r.release()
+        window.__holdMode = 'off'
+        await new Promise(r => setTimeout(r, 50))
+        const out = []
+        for (const url of window.__capturedUrls) {
+          try { out.push((await fetch(url)).ok) } catch { out.push(false) }
+        }
+        return out
+      })
+      assert.ok(staleResults.length >= 1 && staleResults.every(ok => ok === false), '重开后放行的旧成功 URL 也应被撤销')
+      assert.equal(await img1.evaluate(el => el.naturalWidth), 1, '旧请求放行后当前第 1 页仍正常显示')
+
+      await page.keyboard.press('ArrowRight')
+      const img2 = page.locator('.comic-reader img[alt="2"]').first()
+      await img2.waitFor({ state: 'attached' })
+      assert.equal(await img2.evaluate(el => el.complete && el.naturalWidth > 0 ? el.naturalWidth : new Promise(r => el.onload = () => r(el.naturalWidth))), 1)
+
+      assert.deepEqual(errors, [], '页面不应有未捕获异常')
+    } finally {
+      await browser.close()
+    }
+  } finally {
+    await server.close()
+  }
+})
