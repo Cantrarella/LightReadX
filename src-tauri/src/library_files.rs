@@ -45,7 +45,13 @@ fn hex(digest: &[u8]) -> String {
 
 /// 流式计算文件的 SHA-256 (与 Tauri 无关, 便于单测)
 pub fn sha256_file(path: &Path) -> Result<String, String> {
-  let mut file = std::fs::File::open(path).map_err(|e| format!("file: {e}"))?;
+  let mut file = std::fs::File::open(path).map_err(|e| {
+    if e.kind() == std::io::ErrorKind::NotFound {
+      format!("not_found: {e}")
+    } else {
+      format!("file: {e}")
+    }
+  })?;
   let mut hasher = Sha256::new();
   let mut buf = vec![0u8; 1024 * 1024];
   loop {
@@ -147,6 +153,9 @@ pub async fn library_file_download(
 pub fn library_file_rename<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: String, from: String, to: String) -> Result<(), String> {
   let from = library_path(&app, root.clone(), from)?;
   let to = library_path(&app, root, to)?;
+  if let Some(parent) = to.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| format!("file: {e}"))?;
+  }
   std::fs::rename(&from, &to).map_err(|e| format!("file: {e}"))
 }
 
@@ -217,6 +226,63 @@ pub async fn library_file_export<R: tauri::Runtime>(
   .map_err(|e| format!("file: {e}"))?
 }
 
+fn export_file_to_dir_unique(src: &Path, dir_path: &Path, clean_name: &str) -> Result<String, String> {
+  std::fs::create_dir_all(dir_path).map_err(|e| format!("file: {e}"))?;
+  let (stem, ext): (&str, Option<&str>) =
+    if clean_name.to_ascii_lowercase().ends_with(".fb2.zip") && clean_name.len() > 8 {
+      (&clean_name[..clean_name.len() - 8], Some("fb2.zip"))
+    } else {
+      (
+        Path::new(clean_name)
+          .file_stem()
+          .and_then(|s| s.to_str())
+          .unwrap_or("book"),
+        Path::new(clean_name)
+          .extension()
+          .and_then(|e| e.to_str()),
+      )
+    };
+
+  let mut idx = 1u32;
+  loop {
+    let next_name = if idx == 1 {
+      clean_name.to_string()
+    } else {
+      match ext {
+        Some(e) if !e.is_empty() => format!("{stem} ({idx}).{e}"),
+        _ => format!("{stem} ({idx})"),
+      }
+    };
+    let candidate = dir_path.join(next_name);
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+      Ok(mut dst) => {
+        let mut src_file = match std::fs::File::open(src) {
+          Ok(f) => f,
+          Err(e) => {
+            drop(dst);
+            let _ = std::fs::remove_file(&candidate);
+            return Err(format!("file: {e}"));
+          }
+        };
+        if let Err(e) = std::io::copy(&mut src_file, &mut dst) {
+          drop(dst);
+          let _ = std::fs::remove_file(&candidate);
+          return Err(format!("file: {e}"));
+        }
+        return Ok(candidate.to_string_lossy().into_owned());
+      }
+      Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+        idx += 1;
+      }
+      // Windows 对已有同名目录执行 create_new(true) 会返回 PermissionDenied
+      Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && candidate.is_dir() => {
+        idx += 1;
+      }
+      Err(e) => return Err(format!("file: {e}")),
+    }
+  }
+}
+
 /// 批量导出到指定目录: 若目标文件名已存在, 自动追加 ` (2)`、` (3)` 避免覆盖, 返回实际写入路径
 #[tauri::command]
 pub async fn library_file_export_to_dir<R: tauri::Runtime>(
@@ -236,34 +302,8 @@ pub async fn library_file_export_to_dir<R: tauri::Runtime>(
     .and_then(|n| n.to_str())
     .ok_or_else(|| "file: 文件名无效".to_string())?
     .to_string();
-  tauri::async_runtime::spawn_blocking(move || {
-    std::fs::create_dir_all(&dir_path).map_err(|e| format!("file: {e}"))?;
-    let (stem, ext): (&str, Option<&str>) = if clean_name.to_ascii_lowercase().ends_with(".fb2.zip") && clean_name.len() > 8 {
-      (&clean_name[..clean_name.len() - 8], Some("fb2.zip"))
-    } else {
-      (
-        Path::new(&clean_name)
-          .file_stem()
-          .and_then(|s| s.to_str())
-          .unwrap_or("book"),
-        Path::new(&clean_name)
-          .extension()
-          .and_then(|e| e.to_str()),
-      )
-    };
-    let mut candidate = dir_path.join(&clean_name);
-    let mut idx = 2u32;
-    while candidate.exists() {
-      let next_name = match ext {
-        Some(e) if !e.is_empty() => format!("{stem} ({idx}).{e}"),
-        _ => format!("{stem} ({idx})"),
-      };
-      candidate = dir_path.join(next_name);
-      idx += 1;
-    }
-    std::fs::copy(&src, &candidate).map_err(|e| format!("file: {e}"))?;
-    Ok(candidate.to_string_lossy().into_owned())
-  })
+
+  tauri::async_runtime::spawn_blocking(move || export_file_to_dir_unique(&src, &dir_path, &clean_name))
   .await
   .map_err(|e| format!("file: {e}"))?
 }
@@ -454,7 +494,9 @@ mod tests {
     std::fs::write(&path, &data).unwrap();
     assert_eq!(sha256_file(&path).unwrap(), hex(&Sha256::digest(&data)));
     std::fs::remove_file(&path).unwrap();
-    assert!(sha256_file(&path).unwrap_err().starts_with("file:"));
+    assert!(sha256_file(&path).unwrap_err().starts_with("not_found:"));
+    let missing_dir_file = path.with_file_name("missing-subdir").join("book.cbz");
+    assert!(sha256_file(&missing_dir_file).unwrap_err().starts_with("not_found:"));
   }
 
   #[tokio::test]
@@ -501,5 +543,84 @@ mod tests {
     assert!(write_chunk(&missing, 5, b"x").is_err());
     assert!(!missing.exists());
     let _ = std::fs::remove_file(&path);
+  }
+
+  #[test]
+  fn export_file_to_dir_preserves_fb2_zip_and_cleans_up_missing_src() {
+    let base = temp("export-fb2");
+    let src_dir = base.join("src");
+    let dst_dir = base.join("dst");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+
+    let src = src_dir.join("book.fb2.zip");
+    std::fs::write(&src, b"fb2-payload").unwrap();
+    std::fs::write(dst_dir.join("novel.fb2.zip"), b"existing").unwrap();
+
+    let exported = export_file_to_dir_unique(&src, &dst_dir, "novel.fb2.zip").unwrap();
+    assert_eq!(Path::new(&exported).file_name().unwrap().to_str().unwrap(), "novel (2).fb2.zip");
+    assert_eq!(std::fs::read(&exported).unwrap(), b"fb2-payload");
+    assert_eq!(std::fs::read(dst_dir.join("novel.fb2.zip")).unwrap(), b"existing");
+
+    let missing = src_dir.join("missing.cbz");
+    assert!(export_file_to_dir_unique(&missing, &dst_dir, "broken.cbz").is_err());
+    assert!(!dst_dir.join("broken.cbz").exists());
+
+    std::fs::remove_dir_all(&base).unwrap();
+  }
+
+  #[test]
+  fn export_file_to_dir_concurrent_same_title_keeps_both_and_existing() {
+    let base = temp("export-concurrent");
+    let src_dir = base.join("src");
+    let dst_dir = base.join("dst");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+
+    let src1 = src_dir.join("1.cbz");
+    let src2 = src_dir.join("2.cbz");
+    std::fs::write(&src1, b"first-book-bytes").unwrap();
+    std::fs::write(&src2, b"second-book-bytes").unwrap();
+    std::fs::write(dst_dir.join("same.cbz"), b"pre-existing").unwrap();
+
+    let d1 = dst_dir.clone();
+    let d2 = dst_dir.clone();
+    let t1 = std::thread::spawn(move || export_file_to_dir_unique(&src1, &d1, "same.cbz"));
+    let t2 = std::thread::spawn(move || export_file_to_dir_unique(&src2, &d2, "same.cbz"));
+
+    let p1 = t1.join().unwrap().unwrap();
+    let p2 = t2.join().unwrap().unwrap();
+    assert_ne!(p1, p2);
+
+    let mut contents = vec![std::fs::read(&p1).unwrap(), std::fs::read(&p2).unwrap()];
+    contents.sort();
+    assert_eq!(contents, vec![b"first-book-bytes".to_vec(), b"second-book-bytes".to_vec()]);
+    assert_eq!(std::fs::read(dst_dir.join("same.cbz")).unwrap(), b"pre-existing");
+
+    std::fs::remove_dir_all(&base).unwrap();
+  }
+
+  #[test]
+  fn export_file_to_dir_skips_existing_directory_and_errors_on_invalid_dest() {
+    let base = temp("export-dir-collision");
+    let src_dir = base.join("src");
+    let dst_dir = base.join("dst");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(dst_dir.join("same.cbz")).unwrap();
+
+    let src = src_dir.join("book.cbz");
+    std::fs::write(&src, b"dir-collision-payload").unwrap();
+
+    let exported = export_file_to_dir_unique(&src, &dst_dir, "same.cbz").unwrap();
+    assert_eq!(Path::new(&exported).file_name().unwrap().to_str().unwrap(), "same (2).cbz");
+    assert!(dst_dir.join("same.cbz").is_dir());
+    assert_eq!(std::fs::read(&exported).unwrap(), b"dir-collision-payload");
+
+    // 目标路径本身是普通文件而非目录时，create_dir_all / open 应立即返回错误
+    let file_as_dir = base.join("not-a-dir");
+    std::fs::write(&file_as_dir, b"file").unwrap();
+    assert!(export_file_to_dir_unique(&src, &file_as_dir, "out.cbz").unwrap_err().starts_with("file:"));
+
+    std::fs::remove_dir_all(&base).unwrap();
   }
 }

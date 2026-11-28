@@ -102,13 +102,29 @@ export function initDownloads() {
   downloadState.tasks = load()
 }
 
+const FINISHED_HISTORY_LIMIT = 200
+
+function isUnfinishedStatus(status: TaskStatus): boolean {
+  return status === 'queued' || status === 'running' || status === 'paused' || status === 'interrupted'
+}
+
+export function trimTasksForPersist(tasks: DownloadTask[]): DownloadTask[] {
+  let finished = 0
+  return tasks.filter(t => {
+    if (isUnfinishedStatus(t.status)) return true
+    if (finished >= FINISHED_HISTORY_LIMIT) return false
+    finished++
+    return true
+  })
+}
+
 let saveTimer: number | undefined
 function persist() {
   window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
     try {
-      // 只留最近 200 条, 免得 localStorage 越滚越大
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(downloadState.tasks.slice(0, 200)))
+      // 已结束历史只留最近 200 条, 未完成任务全部保留以免重启丢失
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimTasksForPersist(downloadState.tasks)))
     } catch { /* 空间满了不影响运行 */ }
   }, 300)
 }

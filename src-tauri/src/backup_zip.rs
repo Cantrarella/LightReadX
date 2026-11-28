@@ -12,7 +12,7 @@
 //! 支持 store 与 deflate (第三方 OKF 包可能压缩) 及 ZIP64.
 
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, HashSet},
   fs::File,
   io::{BufWriter, Read, Seek, SeekFrom, Write},
   path::{Path, PathBuf},
@@ -327,6 +327,7 @@ pub struct CdEntry {
   pub name: String,
   method: u16,
   flags: u16,
+  pub crc32: u32,
   pub size: u64,
   csize: u64,
   offset: u64,
@@ -378,6 +379,7 @@ pub fn read_central<R: Read + Seek>(f: &mut R) -> Result<Vec<CdEntry>, String> {
   f.seek(SeekFrom::Start(cd_offset)).map_err(io)?;
   f.read_exact(&mut cd).map_err(io)?;
   let mut out = Vec::with_capacity(count.min(1 << 20) as usize);
+  let mut seen = HashSet::with_capacity(out.capacity());
   let mut at = 0usize;
   for _ in 0..count {
     if at + 46 > cd.len() || le32(&cd, at) != 0x0201_4b50 {
@@ -388,6 +390,10 @@ pub fn read_central<R: Read + Seek>(f: &mut R) -> Result<Vec<CdEntry>, String> {
       return Err(bad("中央目录损坏"));
     }
     let name = String::from_utf8_lossy(&cd[at + 46..at + 46 + n]).into_owned();
+    if !seen.insert(name.clone()) {
+      return Err(bad(&format!("重复的包内路径 {name}")));
+    }
+    let crc32 = le32(&cd, at + 16) as u32;
     let (mut csize, mut size, mut offset) = (le32(&cd, at + 20), le32(&cd, at + 24), le32(&cd, at + 42));
     // ZIP64 扩展字段: 只包含值为 0xFFFFFFFF 的那几项, 顺序固定
     let mut e = at + 46 + n;
@@ -405,7 +411,7 @@ pub fn read_central<R: Read + Seek>(f: &mut R) -> Result<Vec<CdEntry>, String> {
       }
       e += 4 + sz;
     }
-    out.push(CdEntry { name, method: le16(&cd, at + 10) as u16, flags: le16(&cd, at + 8) as u16, size, csize, offset });
+    out.push(CdEntry { name, method: le16(&cd, at + 10) as u16, flags: le16(&cd, at + 8) as u16, crc32, size, csize, offset });
     at += 46 + n + x + c;
   }
   Ok(out)
@@ -432,10 +438,11 @@ pub fn open_entry<'a, R: Read + Seek>(f: &'a mut R, entry: &CdEntry) -> Result<B
   }
 }
 
-/// 把一项写进 `out`, 返回 (字节数, SHA-256)
+/// 把一项写进 `out`, 同时校验 CRC-32 并返回 (字节数, SHA-256)
 fn copy_entry<R: Read + Seek>(f: &mut R, entry: &CdEntry, out: &mut dyn Write) -> Result<(u64, String), String> {
   let mut reader = open_entry(f, entry)?;
   let mut sha = Sha256::new();
+  let mut crc = crc32fast::Hasher::new();
   let mut buf = vec![0u8; BUF];
   let mut size = 0u64;
   loop {
@@ -444,8 +451,12 @@ fn copy_entry<R: Read + Seek>(f: &mut R, entry: &CdEntry, out: &mut dyn Write) -
       break;
     }
     sha.update(&buf[..n]);
+    crc.update(&buf[..n]);
     out.write_all(&buf[..n]).map_err(|e| format!("file: {e}"))?;
     size += n as u64;
+  }
+  if crc.finalize() != entry.crc32 {
+    return Err(bad(&format!("{} CRC-32 校验失败", entry.name)));
   }
   Ok((size, sha.finalize().iter().map(|b| format!("{b:02x}")).collect()))
 }
@@ -489,20 +500,32 @@ pub struct AssetCheck {
   pub sha256: Option<String>,
 }
 
-/// 逐项校验; 每项返回 "" (通过) / "missing" / "size" / "sha256" / 其它错误信息
-pub fn verify_assets<R: Read + Seek>(f: &mut R, checks: &[AssetCheck]) -> Result<Vec<String>, String> {
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResult {
+  pub error: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub sha256: Option<String>,
+}
+
+/// 逐项校验; 每项返回 error ("" 表示通过, 或 "missing" / "size" / "sha256" / 其它错误信息) 及通过时的 SHA-256
+pub fn verify_assets<R: Read + Seek>(f: &mut R, checks: &[AssetCheck]) -> Result<Vec<VerifyResult>, String> {
   let entries: BTreeMap<String, CdEntry> = read_central(f)?.into_iter().map(|e| (e.name.clone(), e)).collect();
   let mut out = Vec::with_capacity(checks.len());
   for check in checks {
     let Some(entry) = entries.get(&check.path) else {
-      out.push("missing".into());
+      out.push(VerifyResult { error: "missing".into(), sha256: None });
       continue;
     };
     let result = match copy_entry(f, entry, &mut std::io::sink()) {
-      Err(e) => e,
-      Ok((size, _)) if check.byte_length.is_some_and(|n| n != size) => "size".into(),
-      Ok((_, sha)) if check.sha256.as_deref().is_some_and(|want| !want.eq_ignore_ascii_case(&sha)) => "sha256".into(),
-      Ok(_) => String::new(),
+      Err(e) => VerifyResult { error: e, sha256: None },
+      Ok((size, _)) if check.byte_length.is_some_and(|n| n != size) => {
+        VerifyResult { error: "size".into(), sha256: None }
+      }
+      Ok((_, sha)) if check.sha256.as_deref().is_some_and(|want| !want.eq_ignore_ascii_case(&sha)) => {
+        VerifyResult { error: "sha256".into(), sha256: None }
+      }
+      Ok((_, sha)) => VerifyResult { error: String::new(), sha256: Some(sha) },
     };
     out.push(result);
   }
@@ -532,7 +555,7 @@ pub async fn backup_open(src: String) -> Result<BackupIndex, String> {
 }
 
 #[tauri::command]
-pub async fn backup_verify(src: String, checks: Vec<AssetCheck>) -> Result<Vec<String>, String> {
+pub async fn backup_verify(src: String, checks: Vec<AssetCheck>) -> Result<Vec<VerifyResult>, String> {
   tauri::async_runtime::spawn_blocking(move || verify_assets(&mut open_archive(&src)?, &checks))
     .await
     .map_err(|e| format!("file: {e}"))?
@@ -545,6 +568,9 @@ pub async fn backup_extract<R: tauri::Runtime>(app: tauri::AppHandle<R>, src: St
   tauri::async_runtime::spawn_blocking(move || {
     let mut f = open_archive(&src)?;
     let entry = find_entry(&mut f, &path)?;
+    if let Some(parent) = dest.parent() {
+      std::fs::create_dir_all(parent).map_err(|e| format!("file: {e}"))?;
+    }
     let result = File::create(&dest)
       .map_err(|e| format!("file: {e}"))
       .and_then(|out| {
@@ -560,6 +586,20 @@ pub async fn backup_extract<R: tauri::Runtime>(app: tauri::AppHandle<R>, src: St
   })
   .await
   .map_err(|e| format!("file: {e}"))?
+}
+
+/// 流式计算包内一项的 SHA-256（旧版无校验值备份判重时无需把整本书读进 WebView）
+pub fn hash_entry<R: Read + Seek>(f: &mut R, path: &str) -> Result<String, String> {
+  let entry = find_entry(f, path)?;
+  let (_, sha) = copy_entry(f, &entry, &mut std::io::sink())?;
+  Ok(sha)
+}
+
+#[tauri::command]
+pub async fn backup_hash_entry(src: String, path: String) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || hash_entry(&mut open_archive(&src)?, &path))
+    .await
+    .map_err(|e| format!("file: {e}"))?
 }
 
 /// 读包内一项的字节 (封面这类小文件)
@@ -650,7 +690,12 @@ mod tests {
         AssetCheck { path: "assets/books/a/content.epub".into(), byte_length: None, sha256: Some("00".into()) },
         AssetCheck { path: "nope".into(), byte_length: None, sha256: None },
       ];
-      assert_eq!(verify_assets(&mut f, &checks).unwrap(), vec!["", "size", "sha256", "missing"]);
+      assert_eq!(verify_assets(&mut f, &checks).unwrap(), vec![
+        VerifyResult { error: String::new(), sha256: Some(sha.clone()) },
+        VerifyResult { error: "size".into(), sha256: None },
+        VerifyResult { error: "sha256".into(), sha256: None },
+        VerifyResult { error: "missing".into(), sha256: None },
+      ]);
       let entry = find_entry(&mut f, "assets/books/a/content.epub").unwrap();
       let mut got = vec![];
       assert_eq!(copy_entry(&mut f, &entry, &mut got).unwrap().1, sha);
@@ -748,5 +793,104 @@ mod tests {
       let r = write_zip(Cursor::new(Vec::new()), vec![(bad.to_string(), Source::Bytes(vec![]))], U32_MAX, |_| {});
       assert!(r.is_err(), "{bad}");
     }
+  }
+
+  #[test]
+  fn hash_entry_matches_known_sha256() {
+    let mut out = Cursor::new(Vec::new());
+    let payload = b"legacy-backup-book-bytes".to_vec();
+    let expected: String = Sha256::digest(&payload).iter().map(|b| format!("{b:02x}")).collect();
+    write_zip(&mut out, vec![("books/legacy.txt".to_string(), Source::Bytes(payload))], U32_MAX, |_| {}).unwrap();
+    out.set_position(0);
+    assert_eq!(hash_entry(&mut out, "books/legacy.txt").unwrap(), expected);
+  }
+
+  #[test]
+  fn verify_assets_returns_sha256_on_success_and_preserves_errors() {
+    let mut out = Cursor::new(Vec::new());
+    let payload = b"verify-book-bytes".to_vec();
+    let expected = hex_sha(&payload);
+    write_zip(&mut out, vec![("books/ok.txt".to_string(), Source::Bytes(payload.clone()))], U32_MAX, |_| {}).unwrap();
+    out.set_position(0);
+    let results = verify_assets(&mut out, &[
+      AssetCheck { path: "books/ok.txt".into(), byte_length: None, sha256: None },
+      AssetCheck { path: "books/ok.txt".into(), byte_length: Some(payload.len() as u64 + 1), sha256: None },
+      AssetCheck { path: "books/ok.txt".into(), byte_length: None, sha256: Some("deadbeef".into()) },
+      AssetCheck { path: "books/missing.txt".into(), byte_length: None, sha256: None },
+    ]).unwrap();
+    assert_eq!(results, vec![
+      VerifyResult { error: String::new(), sha256: Some(expected) },
+      VerifyResult { error: "size".into(), sha256: None },
+      VerifyResult { error: "sha256".into(), sha256: None },
+      VerifyResult { error: "missing".into(), sha256: None },
+    ]);
+  }
+
+  #[test]
+  fn rejects_duplicate_zip_entry_paths() {
+    let mut out = Cursor::new(Vec::new());
+    write_zip(
+      &mut out,
+      vec![
+        ("books/same.txt".to_string(), Source::Bytes(b"first-content".to_vec())),
+        ("books/same.txt".to_string(), Source::Bytes(b"second-content".to_vec())),
+      ],
+      U32_MAX,
+      |_| {},
+    )
+    .unwrap();
+    let mut f = Cursor::new(out.into_inner());
+    let err1 = open_index(&mut f).unwrap_err();
+    assert!(err1.contains("books/same.txt") && err1.contains("重复"), "{err1}");
+    let err2 = verify_assets(&mut f, &[AssetCheck { path: "books/same.txt".into(), byte_length: None, sha256: None }]).unwrap_err();
+    assert!(err2.contains("books/same.txt") && err2.contains("重复"), "{err2}");
+    let err3 = find_entry(&mut f, "books/same.txt").unwrap_err();
+    assert!(err3.contains("books/same.txt") && err3.contains("重复"), "{err3}");
+  }
+
+  #[test]
+  fn detects_crc32_mismatch_on_equal_length_corrupt_entry_and_verifies_deflate() {
+    use flate2::{write::DeflateEncoder, Compression};
+
+    // 1. 无 SHA-256 的 store 条目：篡改单字节（保持长度与记录的 CRC-32 不变），校验应报 CRC-32 错误且不返回摘要
+    let mut out = Cursor::new(Vec::new());
+    let payload = b"uncompressed-legacy-book-content".to_vec();
+    write_zip(&mut out, vec![("books/legacy.txt".to_string(), Source::Bytes(payload.clone()))], U32_MAX, |_| {}).unwrap();
+    let mut zip_bytes = out.into_inner();
+    let pos = zip_bytes.windows(payload.len()).position(|w| w == payload.as_slice()).unwrap();
+    zip_bytes[pos] ^= 0xFF;
+
+    let mut corrupt_cursor = Cursor::new(zip_bytes);
+    let res = verify_assets(&mut corrupt_cursor, &[
+      AssetCheck { path: "books/legacy.txt".into(), byte_length: Some(payload.len() as u64), sha256: None },
+    ]).unwrap();
+    assert_eq!(res.len(), 1);
+    assert!(res[0].error.contains("books/legacy.txt") && res[0].error.contains("CRC-32"), "unexpected error: {:?}", res[0]);
+    assert_eq!(res[0].sha256, None);
+
+    // 2. 完好的 deflate 条目通过 CRC-32 校验并返回正确 SHA-256 摘要
+    let data = b"deflated-book-content-for-crc-and-sha256-verification".to_vec();
+    let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(&data).unwrap();
+    let comp = enc.finish().unwrap();
+    let name = b"books/deflated.txt";
+    let crc = crc32fast::hash(&data);
+    let mut z = vec![];
+    put32(&mut z, 0x0403_4b50); put16(&mut z, 20); put16(&mut z, 0); put16(&mut z, 8); put16(&mut z, 0); put16(&mut z, 0);
+    put32(&mut z, crc); put32(&mut z, comp.len() as u32); put32(&mut z, data.len() as u32);
+    put16(&mut z, name.len() as u16); put16(&mut z, 0); z.extend_from_slice(name); z.extend_from_slice(&comp);
+    let cd = z.len();
+    put32(&mut z, 0x0201_4b50); put16(&mut z, 20); put16(&mut z, 20); put16(&mut z, 0); put16(&mut z, 8); put16(&mut z, 0); put16(&mut z, 0);
+    put32(&mut z, crc); put32(&mut z, comp.len() as u32); put32(&mut z, data.len() as u32);
+    put16(&mut z, name.len() as u16); put16(&mut z, 0); put16(&mut z, 0); put16(&mut z, 0); put16(&mut z, 0); put32(&mut z, 0); put32(&mut z, 0);
+    z.extend_from_slice(name);
+    let cd_size = z.len() - cd;
+    put32(&mut z, 0x0605_4b50); put16(&mut z, 0); put16(&mut z, 0); put16(&mut z, 1); put16(&mut z, 1);
+    put32(&mut z, cd_size as u32); put32(&mut z, cd as u32); put16(&mut z, 0);
+
+    let ok_res = verify_assets(&mut Cursor::new(z), &[
+      AssetCheck { path: "books/deflated.txt".into(), byte_length: Some(data.len() as u64), sha256: None },
+    ]).unwrap();
+    assert_eq!(ok_res, vec![VerifyResult { error: String::new(), sha256: Some(hex_sha(&data)) }]);
   }
 }

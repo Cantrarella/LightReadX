@@ -238,6 +238,7 @@ pub fn run() {
       backup_zip::backup_open,
       backup_zip::backup_verify,
       backup_zip::backup_extract,
+      backup_zip::backup_hash_entry,
       backup_zip::backup_read_entry,
       app_update::update_download,
       app_update::update_finish,

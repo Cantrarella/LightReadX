@@ -17,6 +17,8 @@ export function bookStoredRelPath(book: Pick<BookMeta, 'id' | 'fileName' | 'form
 }
 
 /** 按漫画/书籍标题生成安全的导出文件名（替换 Windows 非法字符，保留原文件扩展名） */
+const WINDOWS_RESERVED_NAME_RE = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])$/i
+
 export function exportFileName(book: Pick<BookMeta, 'title' | 'fileName' | 'format'>): string {
   const ext = storedExt(book.fileName, book.format)
   const rawBase = (book.title || '').trim()
@@ -29,7 +31,10 @@ export function exportFileName(book: Pick<BookMeta, 'title' | 'fileName' | 'form
     .slice(0, 120)
   const base = cleaned || 'book'
   const suffix = `.${ext}`
-  return base.toLowerCase().endsWith(suffix.toLowerCase()) ? base : `${base}${suffix}`
+  const withExt = base.toLowerCase().endsWith(suffix.toLowerCase()) ? base : `${base}${suffix}`
+  const firstDot = withExt.indexOf('.')
+  const head = (firstDot === -1 ? withExt : withExt.slice(0, firstDot)).replace(/ +$/g, '')
+  return WINDOWS_RESERVED_NAME_RE.test(head) ? `_${withExt}` : withExt
 }
 
 export interface BatchExportResult {

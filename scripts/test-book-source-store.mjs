@@ -89,3 +89,28 @@ test('持久化：重载后数据保留', () => {
   assert.equal(store2.count, 1)
   assert.equal(store2.records[0].source.bookSourceName, '源A')
 })
+
+test('导出书源保留当前启停状态并可往返导入', () => {
+  mem.clear()
+  const store = useBookSourceStore(createPinia())
+  store.importSources(makeSource('https://a.com', '源A'))
+  const id = store.records[0].id
+
+  store.setEnabled(id, false)
+  const exportedDisabled = JSON.parse(store.exportSources())
+  assert.equal(exportedDisabled[0].enabled, false)
+
+  const storeDisabled = useBookSourceStore(createPinia())
+  storeDisabled.clearAll()
+  storeDisabled.importSources(exportedDisabled)
+  assert.equal(storeDisabled.records[0].enabled, false)
+
+  store.setEnabled(id, true)
+  const exportedEnabled = JSON.parse(store.exportSources())
+  assert.equal(exportedEnabled[0].enabled, true)
+
+  const storeEnabled = useBookSourceStore(createPinia())
+  storeEnabled.clearAll()
+  storeEnabled.importSources(exportedEnabled)
+  assert.equal(storeEnabled.records[0].enabled, true)
+})

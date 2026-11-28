@@ -866,6 +866,8 @@ interface ArchiveSource {
   entries: Record<string, Uint8Array>
   /** 写入前校验全部书与封面, 任何一项不通过就抛错 */
   verifyAll(books: RestorableBook[]): Promise<void>
+  /** 计算或读取包内书籍内容的 SHA-256（用于重名去重，兼容无校验值的旧备份） */
+  hashBookContent(book: RestorableBook): Promise<string>
   /** 恢复一本书, 返回新 id */
   addBook(book: RestorableBook, meta: NewBookMeta): Promise<string>
 }
@@ -884,6 +886,13 @@ function memoryArchive(storage: LibraryStorage, entries: Record<string, Uint8Arr
           : undefined
         payloads.set(book, { content, cover })
       }
+    },
+    async hashBookContent(book) {
+      if (book.content.sha256) return book.content.sha256.toLowerCase()
+      const payload = payloads.get(book)
+      const bytes = payload?.content ?? entries[book.content.path]
+      if (!bytes) archiveError(`缺少文件 ${book.content.path}`)
+      return sha256(bytes)
     },
     async addBook(book, meta) {
       const payload = payloads.get(book)!
@@ -905,6 +914,7 @@ async function nativeArchive(storage: LibraryStorage, src: string): Promise<Arch
   const root = getLibraryRoot().replace(/\/+$/, '')
   const index = await invoke<{ texts: Record<string, string> }>('backup_open', { src })
   const entries = Object.fromEntries(Object.entries(index.texts).map(([path, text]) => [path, strToU8(text)]))
+  const verifiedHashes = new Map<string, string>()
   return {
     entries,
     async verifyAll(books) {
@@ -913,17 +923,24 @@ async function nativeArchive(storage: LibraryStorage, src: string): Promise<Arch
         checks.push({ ...book.content, label: `books[${index}].content` })
         if (book.cover) checks.push({ ...book.cover, label: `books[${index}].cover` })
       }
-      const results = await invoke<string[]>('backup_verify', {
+      const results = await invoke<Array<{ error: string; sha256?: string }>>('backup_verify', {
         src,
         checks: checks.map(({ path, byteLength, sha256 }) => ({ path, byteLength, sha256 })),
       })
       results.forEach((result, i) => {
         const { label, path } = checks[i]
-        if (result === 'missing') archiveError(`${label} 缺少文件 ${path}`)
-        if (result === 'size') archiveError(`${label} 长度不匹配`)
-        if (result === 'sha256') archiveError(`${label} SHA-256 校验失败`)
-        if (result) archiveError(`${label} ${result}`)
+        if (result.error === 'missing') archiveError(`${label} 缺少文件 ${path}`)
+        if (result.error === 'size') archiveError(`${label} 长度不匹配`)
+        if (result.error === 'sha256') archiveError(`${label} SHA-256 校验失败`)
+        if (result.error) archiveError(`${label} ${result.error}`)
+        if (result.sha256) verifiedHashes.set(path, result.sha256.toLowerCase())
       })
+    },
+    async hashBookContent(book) {
+      if (book.content.sha256) return book.content.sha256.toLowerCase()
+      const verified = verifiedHashes.get(book.content.path)
+      if (verified) return verified
+      return (await invoke<string>('backup_hash_entry', { src, path: book.content.path })).toLowerCase()
     },
     async addBook(book, meta) {
       if (!storage.stageBookFile || !storage.addBookFromStaged) throw new Error('当前存储不支持原生导入')
@@ -983,16 +1000,58 @@ async function restoreBackup(
   await archive.verifyAll(manifest.books)
 
   const existing = await storage.listBooks()
-  const existingByKey = new Map(existing.map(book => [
-    `${book.title}::${book.fileName}`,
-    book.id,
-  ]))
+  // 书名 + 原文件名仅用于筛选候选；真正判重以内容 SHA-256 为准
+  const existingByKey = new Map<string, string[]>()
+  for (const book of existing) {
+    const key = `${book.title}::${book.fileName}`
+    const list = existingByKey.get(key)
+    if (list) list.push(book.id)
+    else existingByKey.set(key, [book.id])
+  }
+  const existingHashCache = new Map<string, string>()
+  async function getExistingSha256(bookId: string): Promise<string> {
+    const cached = existingHashCache.get(bookId)
+    if (cached) return cached
+    const digest = storage.hashBookFile
+      ? (await storage.hashBookFile(bookId)).toLowerCase()
+      : await sha256(new Uint8Array(await (await storage.getBookFile(bookId)).arrayBuffer()))
+    existingHashCache.set(bookId, digest)
+    return digest
+  }
+  function isMissingBookFileError(err: unknown): boolean {
+    if (err && typeof err === 'object') {
+      const code = (err as { code?: unknown }).code
+      const name = (err as { name?: unknown }).name
+      if (code === 'ENOENT' || name === 'NotFoundError') return true
+    }
+    const msg = err instanceof Error ? err.message : String(err ?? '')
+    return /^not_found:|书籍不存在|not found|enoent|no such file|cannot find the file|系统找不到指定的文件|系统找不到指定的路径|\bos error [23]\b/i.test(msg)
+  }
+
   const idMap = new Map<string, string>()
   let bookCount = 0
 
   for (const [index, book] of manifest.books.entries()) {
     onProgress?.(t('backup.restoring', { title: book.meta.title, n: index + 1, total: manifest.books.length }))
-    const duplicateId = existingByKey.get(`${book.meta.title}::${book.meta.fileName}`)
+    const key = `${book.meta.title}::${book.meta.fileName}`
+    const candidates = existingByKey.get(key)
+    let duplicateId: string | undefined
+    let incomingHash: string | undefined
+    if (candidates?.length) {
+      incomingHash = (book.content.sha256 ?? await archive.hashBookContent(book)).toLowerCase()
+      for (const candidateId of candidates) {
+        try {
+          if (await getExistingSha256(candidateId) === incomingHash) {
+            duplicateId = candidateId
+            break
+          }
+        } catch (err) {
+          // 仅跳过本地原文件已缺失的候选；其它 I/O 异常保留真实错误上下文
+          if (isMissingBookFileError(err)) continue
+          throw err
+        }
+      }
+    }
     if (duplicateId) {
       idMap.set(book.meta.id, duplicateId)
       continue
@@ -1001,7 +1060,10 @@ async function restoreBackup(
     const { id: _oldId, hasCover: _hasCover, ...meta } = book.meta
     const newId = await archive.addBook(book, meta)
     idMap.set(book.meta.id, newId)
-    existingByKey.set(`${book.meta.title}::${book.meta.fileName}`, newId)
+    if (candidates) candidates.push(newId)
+    else existingByKey.set(key, [newId])
+    if (incomingHash) existingHashCache.set(newId, incomingHash)
+    else if (book.content.sha256) existingHashCache.set(newId, book.content.sha256.toLowerCase())
     bookCount++
   }
 

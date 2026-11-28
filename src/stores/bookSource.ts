@@ -168,7 +168,7 @@ export const useBookSourceStore = defineStore('bookSources', {
 
     /** 导出全部书源为 JSON 文本（供备份/分享） */
     exportSources(): string {
-      const list = this.records.map(r => r.source)
+      const list = this.records.map(r => ({ ...r.source, enabled: r.enabled }))
       return JSON.stringify(list, null, 2)
     },
   },

@@ -102,3 +102,58 @@ test('loading old duplicate task IDs keeps one record', async () => {
   center.initDownloads()
   assert.deepEqual(center.downloadState.tasks.map(t => t.status), ['interrupted'])
 })
+
+test('persist caps finished history at 200 while preserving all unfinished tasks across restart', async () => {
+  let persistedRaw = '[]'
+  const mixed = [
+    ...Array.from({ length: 205 }, (_, i) => ({
+      id: `done-${i}`,
+      uuid: 'source-b',
+      comicId: 'comic',
+      chapterId: `d-${i}`,
+      comicTitle: 'Done',
+      chapterName: `D${i}`,
+      status: i % 3 === 0 ? 'failed' : i % 3 === 1 ? 'cancelled' : 'done',
+      done: 1,
+      total: 1,
+    })),
+    { id: 'u-queued', uuid: 'source-b', comicId: 'comic', chapterId: 'q1', comicTitle: 'Q', chapterName: 'Q1', status: 'queued', done: 0, total: 5 },
+    { id: 'u-running', uuid: 'source-b', comicId: 'comic', chapterId: 'r1', comicTitle: 'R', chapterName: 'R1', status: 'running', done: 2, total: 5 },
+    { id: 'u-paused', uuid: 'source-b', comicId: 'comic', chapterId: 'p1', comicTitle: 'P', chapterName: 'P1', status: 'paused', done: 3, total: 5 },
+    { id: 'u-interrupted', uuid: 'source-b', comicId: 'comic', chapterId: 'i1', comicTitle: 'I', chapterName: 'I1', status: 'interrupted', done: 1, total: 5 },
+  ]
+
+  const { center } = await setup([], mixed)
+  globalThis.localStorage = {
+    getItem: () => persistedRaw,
+    setItem: (_k, v) => { persistedRaw = String(v) },
+    removeItem() {},
+  }
+  globalThis.window = {
+    clearTimeout() {},
+    setTimeout(fn) { fn(); return 1 },
+  }
+
+  center.downloadState.tasks = mixed
+  // 触发 persist(): 暂停 queued 任务会调用 persist()
+  center.pause('u-queued')
+
+  const saved = JSON.parse(persistedRaw)
+  const savedFinished = saved.filter(t => t.status === 'done' || t.status === 'failed' || t.status === 'cancelled')
+  const savedUnfinished = saved.filter(t => ['queued', 'running', 'paused', 'interrupted'].includes(t.status))
+  assert.equal(savedFinished.length, 200)
+  assert.equal(savedUnfinished.length, 4)
+
+  // 模拟重启恢复
+  const { center: restarted } = await setup([], saved)
+  restarted.initDownloads()
+  const byId = new Map(restarted.downloadState.tasks.map(t => [t.id, t]))
+  assert.equal(restarted.downloadState.tasks.length, 204)
+  for (const id of ['u-queued', 'u-running', 'u-paused', 'u-interrupted']) {
+    assert.equal(byId.get(id)?.status, 'interrupted')
+  }
+
+  // 验证重启后可继续操作
+  restarted.retry('u-paused')
+  assert.ok(['done', 'running', 'queued'].includes(byId.get('u-paused')?.status))
+})

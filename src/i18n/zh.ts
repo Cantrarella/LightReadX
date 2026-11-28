@@ -2312,4 +2312,5 @@ export default {
   'bookSource.nextChapter': '下一章',
   'bookSource.fontSize': '字号',
   'bookSource.fontSizeValue': '{size}',
+  'catalog.downloadReturnedWebpage': '没下到书籍文件，请用浏览器下载后添加',
 } as Record<string, string>

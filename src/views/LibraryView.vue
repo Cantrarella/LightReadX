@@ -1443,6 +1443,10 @@ async function batchClearTags() {
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('transfer.sendToDevices') }}</span></span>
         </button>
+        <button class="sheet-row" @click="bookMenuAction(book => exportBook(book))">
+          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+          <span class="sheet-text"><span class="sheet-label">{{ t('book.exportFile') }}</span></span>
+        </button>
         <button class="sheet-row" @click="bookMenuAction(book => uploadBooks([book.id]))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 18H5a4 4 0 0 1-.6-8 7 7 0 0 1 13.4-2 5 5 0 0 1 1.2 10h-2M12 20V10m-4 4 4-4 4 4"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('library.uploadToCloud') }}</span></span>
@@ -1465,6 +1469,10 @@ async function batchClearTags() {
     <!-- 手机: 批量「更多」 -->
     <AppModal v-if="batchMoreSheet" :title="t('library.selectedCount', { count: selectedIds.size })" @close="batchMoreSheet = false">
       <div class="sheet-list">
+        <button class="sheet-row" @click="batchMoreAction(() => batchExport())">
+          <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+          <span class="sheet-text"><span class="sheet-label">{{ t('library.batchExport') }}</span></span>
+        </button>
         <button class="sheet-row" @click="batchMoreAction(() => uploadBooks([...selectedIds]))">
           <span class="sheet-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 18H5a4 4 0 0 1-.6-8 7 7 0 0 1 13.4-2 5 5 0 0 1 1.2 10h-2M12 20V10m-4 4 4-4 4 4"/></svg></span>
           <span class="sheet-text"><span class="sheet-label">{{ t('library.uploadToCloud') }}</span></span>

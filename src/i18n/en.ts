@@ -2312,4 +2312,5 @@ export default {
   'bookSource.nextChapter': 'Next',
   'bookSource.fontSize': 'Font size',
   'bookSource.fontSizeValue': '{size}',
+  'catalog.downloadReturnedWebpage': 'This book needs to be downloaded from the website. Add the file to your library afterward',
 } as Record<string, string>

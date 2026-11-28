@@ -256,6 +256,8 @@ export class TauriStorage implements LibraryStorage {
     // 空 Blob (取封面失败 / 远端或备份里的空封面) 不写成封面, 否则书库标记有封面却显示不出来
     if (!cover?.size) cover = undefined
     if (cover) {
+      const [coversDir, coversOpts] = this.loc('covers')
+      await this.fs.mkdir(coversDir, { ...coversOpts, recursive: true })
       const [path, opts] = this.loc(this.coverPath(id))
       await this.fs.writeFile(path, new Uint8Array(await cover.arrayBuffer()), opts)
     }

@@ -33,6 +33,7 @@ fn app() -> WebviewWindow<MockRuntime> {
       backup_zip::backup_open,
       backup_zip::backup_verify,
       backup_zip::backup_extract,
+      backup_zip::backup_hash_entry,
       backup_zip::backup_read_entry,
     ])
     .build(mock_context(noop_assets()))
@@ -117,7 +118,12 @@ fn backup_export_import_migrate_and_rename_roundtrip() {
     { "path": "assets/books/b1/content.epub", "sha256": "deadbeef" },
     { "path": "assets/missing.pdf", "byteLength": 1 },
   ]})));
-  assert_eq!(verdict, json!(["", "", "sha256", "missing"]));
+  assert_eq!(verdict, json!([
+    { "error": "", "sha256": sha(&book) },
+    { "error": "", "sha256": sha(b"jpeg-bytes") },
+    { "error": "sha256" },
+    { "error": "missing" },
+  ]));
 
   let restore_root = dst_lib.to_str().unwrap();
   let staged = "books/sync-restore-1.part";
